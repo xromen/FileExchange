@@ -20,7 +20,10 @@ internal static class SelfTest
 
             string[] sources = Enumerable.Range(0, 25).Select(index => Path.Combine(root, $"файл [{index}] & $.txt")).ToArray();
             foreach (string source in sources) File.WriteAllText(source, $"Содержимое: {Path.GetFileName(source)}");
-            Check(FileCopier.Copy(new CopyRequest(target, sources)).Length == 0, "Копирование нескольких файлов завершилось ошибкой.");
+            CopyResult result = FileCopier.Copy(new CopyRequest(target, sources), _ => throw new InvalidOperationException("Запрошена перезапись нового файла."));
+            Check(result.Copied == 25 && result.Skipped == 0 && result.Errors.Length == 0, "Неверный итог копирования нескольких файлов.");
+            Check(Program.FormatCopySummary(result).Contains("Скопировано файлов: 25") && Program.FormatCopySummary(result).Contains("Ошибок: 0"),
+                "Итог успешного копирования не содержит количество файлов.");
             foreach (string source in sources)
                 Check(File.ReadAllText(source) == File.ReadAllText(Path.Combine(target, Path.GetFileName(source))), "Содержимое копии не совпало.");
 
@@ -29,10 +32,40 @@ internal static class SelfTest
             File.WriteAllText(sources[0], "Новая версия");
             string extra = Path.Combine(root, "после ошибки.txt");
             File.WriteAllText(extra, "OK");
-            string[] errors = FileCopier.Copy(new CopyRequest(target, [sources[0], Path.Combine(root, "missing.txt"), root, extra]));
-            Check(errors.Length == 3 && File.Exists(Path.Combine(target, Path.GetFileName(extra))), "Ошибка остановила весь список или не была обнаружена.");
-            Check(File.ReadAllText(existingTarget) == originalContent, "Существующий файл был перезаписан.");
-            Check(FileCopier.Copy(new CopyRequest(root, [extra])).Length == 1 && File.ReadAllText(extra) == "OK", "Копирование в исходную папку изменило файл.");
+            int prompts = 0;
+            result = FileCopier.Copy(new CopyRequest(target, [sources[0], Path.Combine(root, "missing.txt"), root, extra]), path =>
+            {
+                prompts++;
+                Check(path == existingTarget, "Запрос перезаписи содержит неверный путь.");
+                return false;
+            });
+            Check(prompts == 1 && result.Copied == 1 && result.Skipped == 1 && result.Errors.Length == 2 && File.Exists(Path.Combine(target, Path.GetFileName(extra))),
+                "Отказ или ошибка остановили список либо итоговые счётчики неверны.");
+            Check(File.ReadAllText(existingTarget) == originalContent, "Файл был перезаписан без согласия.");
+            string summary = Program.FormatCopySummary(result);
+            Check(summary.Contains("Скопировано файлов: 1") && summary.Contains("Пропущено файлов: 1") && summary.Contains("Ошибок: 2") && summary.Contains("missing.txt"),
+                "Итог частичного копирования не содержит счётчики и ошибки.");
+            prompts = 0;
+            result = FileCopier.Copy(new CopyRequest(target, [sources[0]]), path => { prompts++; return path == existingTarget; });
+            Check(prompts == 1 && result.Copied == 1 && result.Skipped == 0 && result.Errors.Length == 0 && File.ReadAllText(existingTarget) == "Новая версия",
+                "Подтверждённая перезапись не выполнена или не учтена.");
+            Check(File.ReadAllText(sources[0]) == "Новая версия", "Перезапись изменила исходный файл.");
+            result = FileCopier.Copy(new CopyRequest(target, [sources[0]]), _ => false);
+            Check(result.Copied == 0 && result.Skipped == 1 && result.Errors.Length == 0 && Program.FormatCopySummary(result).Contains("Скопировано файлов: 0"),
+                "Отказ от всех перезаписей не учтён в итоговом сообщении.");
+            result = FileCopier.Copy(new CopyRequest(root, [extra]), _ => throw new InvalidOperationException("Запрошена перезапись исходного файла самим собой."));
+            Check(result.Copied == 0 && result.Errors.Length == 1 && File.ReadAllText(extra) == "OK", "Копирование в исходную папку изменило файл.");
+            File.SetAttributes(existingTarget, FileAttributes.ReadOnly);
+            try
+            {
+                result = FileCopier.Copy(new CopyRequest(target, [sources[0]]), _ => true);
+                Check(result.Copied == 0 && result.Errors.Length == 1 && File.ReadAllText(existingTarget) == "Новая версия",
+                    "Неудачная перезапись учтена как успешная или изменила защищённый файл.");
+            }
+            finally { File.SetAttributes(existingTarget, FileAttributes.Normal); }
+            result = FileCopier.Copy(new CopyRequest(extra, [sources[0]]), _ => throw new InvalidOperationException("Запрошена перезапись при недоступной папке назначения."));
+            Check(result.Copied == 0 && result.Skipped == 0 && result.Errors.Length == 1 && Program.FormatCopySummary(result).Contains("Скопировано файлов: 0"),
+                "Ошибка создания папки назначения не содержит итог копирования.");
             File.WriteAllText(config, "повреждённый JSON");
             bool rejected = false;
             try { ExchangeStore.Read(config); }
@@ -55,7 +88,7 @@ internal static class SelfTest
             string registrationLog = File.ReadAllText(Path.Combine(root, "Fail.log"));
             Check(registrationLog.Contains("Вывод регистрации") && registrationLog.Contains("Ошибка регистрации"),
                 "Журнал регистрации потерял вывод скрипта.");
-            Console.WriteLine("OK: 25 файлов, специальные символы, ошибки, защита от перезаписи, добавление и обновление подпунктов, журнал регистрации.");
+            Console.WriteLine("OK: 25 файлов, запрос и отказ перезаписи, итоговые счётчики, ошибки, защита исходников, подпункты, журнал регистрации.");
             return 0;
         }
         finally

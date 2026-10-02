@@ -66,12 +66,20 @@ internal static partial class Program
         {
             var request = JsonSerializer.Deserialize(File.ReadAllText(path), ExchangeJsonContext.Default.CopyRequest)
                 ?? throw new InvalidDataException("Задание копирования повреждено.");
-            string[] errors = FileCopier.Copy(request);
-            if (errors.Length == 0) return 0;
-            MessageBoxW(0, "Некоторые файлы не были скопированы:\r\n\r\n" + string.Join("\r\n", errors), "Файловый обмен", 0x10);
-            return 1;
+            CopyResult result = FileCopier.Copy(request, target =>
+                MessageBoxW(0, $"В папке назначения уже существует файл:\r\n{target}\r\n\r\nПерезаписать его?",
+                    "Файловый обмен — перезапись", 0x00010000 | 0x100 | 0x30 | 0x4) == 6); // Foreground, default No, warning, Yes/No; IDYES.
+            MessageBoxW(0, FormatCopySummary(result), "Файловый обмен — результат",
+                0x00010000u | (result.Errors.Length == 0 ? 0x40u : 0x30u));
+            return result.Errors.Length == 0 ? 0 : 1;
         }
         finally { File.Delete(path); }
+    }
+
+    internal static string FormatCopySummary(CopyResult result)
+    {
+        string summary = $"Копирование завершено.\r\n\r\nСкопировано файлов: {result.Copied}\r\nПропущено файлов: {result.Skipped}\r\nОшибок: {result.Errors.Length}";
+        return result.Errors.Length == 0 ? summary : summary + "\r\n\r\nНе удалось скопировать:\r\n" + string.Join("\r\n", result.Errors);
     }
 
     private static void EnsureInstalled()
