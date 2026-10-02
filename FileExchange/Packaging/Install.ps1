@@ -17,6 +17,7 @@ foreach ($file in @('FileExchange.exe', 'FileExchange.ShellExtension.dll', 'File
 $classId = '{B687DD84-18AA-4A7A-B6D3-3B4A4FBA2F92}'
 $classKeyPath = "Software\Classes\CLSID\$classId"
 $menuKeyPath = 'Software\Classes\*\shell\FileExchange.Menu'
+$directoryMenuKeyPath = 'Software\Classes\Directory\shell\FileExchange.Menu'
 
 if ([Environment]::OSVersion.Version.Build -ge 22000) {
     $packagePath = Join-Path $InstallDirectory 'FileExchange.msix'
@@ -88,6 +89,7 @@ if ([Environment]::OSVersion.Version.Build -ge 22000) {
 
     # If this user upgraded from Windows 10, remove only our legacy verb to avoid duplicate entries.
     [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($menuKeyPath, $false)
+    [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($directoryMenuKeyPath, $false)
     [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($classKeyPath, $false)
 }
 else {
@@ -95,13 +97,15 @@ else {
     $classKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("$classKeyPath\InprocServer32")
     try { $classKey.SetValue('', $dllPath); $classKey.SetValue('ThreadingModel', 'Apartment') }
     finally { $classKey.Dispose() }
-    $menuKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($menuKeyPath)
-    try {
-        $menuKey.SetValue('MUIVerb', $ParentMenuName.Trim())
-        $menuKey.SetValue('ExplorerCommandHandler', $classId)
-        $menuKey.SetValue('MultiSelectModel', 'Player')
+    foreach ($path in @($menuKeyPath, $directoryMenuKeyPath)) {
+        $menuKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($path)
+        try {
+            $menuKey.SetValue('MUIVerb', $ParentMenuName.Trim())
+            $menuKey.SetValue('ExplorerCommandHandler', $classId)
+            $menuKey.SetValue('MultiSelectModel', 'Player')
+        }
+        finally { $menuKey.Dispose() }
     }
-    finally { $menuKey.Dispose() }
 }
 
 if (-not ('FileExchangeShellNotification' -as [type])) {

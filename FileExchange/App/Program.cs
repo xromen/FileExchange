@@ -21,6 +21,11 @@ internal static partial class Program
                 return RunCopyRequest(args[1]);
             }
             if (args is ["--self-test"]) return SelfTest.Run();
+            if (args is ["--version"])
+            {
+                Console.WriteLine(typeof(Program).Assembly.GetName().Version!.ToString(3));
+                return 0;
+            }
             if (args is ["--install"])
             {
                 EnsureInstalled();
@@ -37,7 +42,7 @@ internal static partial class Program
             if (args.Length != 2)
             {
                 Console.WriteLine("FileExchange.exe \"Название подпункта\" \"Папка назначения\"");
-                Console.WriteLine("FileExchange.exe --install | --uninstall | --self-test");
+                Console.WriteLine("FileExchange.exe --install | --uninstall | --self-test | --version");
                 return args.Length == 0 ? 0 : 1;
             }
             Destination destination = ExchangeStore.Validate(args[0], args[1]);
@@ -78,7 +83,7 @@ internal static partial class Program
 
     internal static string FormatCopySummary(CopyResult result)
     {
-        string summary = $"Копирование завершено.\r\n\r\nСкопировано файлов: {result.Copied}\r\nПропущено файлов: {result.Skipped}\r\nОшибок: {result.Errors.Length}";
+        string summary = $"Копирование завершено.\r\n\r\nСкопировано файлов: {result.Copied}\r\nСоздано папок: {result.CreatedDirectories}\r\nПропущено файлов: {result.Skipped}\r\nОшибок: {result.Errors.Length}";
         return result.Errors.Length == 0 ? summary : summary + "\r\n\r\nНе удалось скопировать:\r\n" + string.Join("\r\n", result.Errors);
     }
 

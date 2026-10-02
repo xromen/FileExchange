@@ -1,0 +1,24 @@
+<Project>
+  <PropertyGroup>
+    <FileExchangeVersionPrefix>1.0</FileExchangeVersionPrefix>
+  </PropertyGroup>
+  <Target Name="GetFileExchangeVersion" BeforeTargets="GetAssemblyVersion">
+    <Exec Command="git rev-parse --is-shallow-repository" WorkingDirectory="$(MSBuildThisFileDirectory)"
+          ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="FileExchangeShallow" />
+    </Exec>
+    <Error Condition="'$(FileExchangeShallow)' == 'true'" Text="Для вычисления версии нужна полная история Git: git fetch --unshallow." />
+    <Exec Command="git rev-list --first-parent --count HEAD" WorkingDirectory="$(MSBuildThisFileDirectory)"
+          ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="FileExchangeRevision" />
+    </Exec>
+    <!-- MSIX version components are 16-bit; do not silently wrap a published version. -->
+    <Error Condition="'$(FileExchangeRevision)' &gt; '65535'" Text="Номер коммита превысил лимит MSIX 65535; обновите схему версионирования." />
+    <PropertyGroup>
+      <Version>$(FileExchangeVersionPrefix).$(FileExchangeRevision)</Version>
+      <AssemblyVersion>$(Version).0</AssemblyVersion>
+      <FileVersion>$(Version).0</FileVersion>
+      <InformationalVersion>$(Version)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+</Project>

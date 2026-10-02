@@ -8,8 +8,11 @@ public static partial class ShellNotification
     public static void Refresh()
     {
         // Windows 10 may take the parent title from the registry rather than IExplorerCommand.
-        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Classes\*\shell\FileExchange.Menu", writable: true);
-        key?.SetValue("MUIVerb", ExchangeStore.ReadParentName());
+        foreach (string kind in new[] { "*", "Directory" })
+        {
+            using var key = Registry.CurrentUser.OpenSubKey($@"Software\Classes\{kind}\shell\FileExchange.Menu", writable: true);
+            key?.SetValue("MUIVerb", ExchangeStore.ReadParentName());
+        }
         SHChangeNotify(0x08000000, 0, 0, 0);
     }
 

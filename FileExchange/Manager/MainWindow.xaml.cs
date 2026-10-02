@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Title += $" · версия {typeof(MainWindow).Assembly.GetName().Version!.ToString(3)}";
         PackageBox.Text = AppContext.BaseDirectory;
         UserText.Text = $"Администратор · Настройки для {WindowsIdentity.GetCurrent().Name}";
     }

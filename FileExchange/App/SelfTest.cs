@@ -94,6 +94,73 @@ internal static class SelfTest
             result = FileCopier.Copy(new CopyRequest(extra, [sources[0]]), _ => throw new InvalidOperationException("Запрошена перезапись при недоступной папке назначения."));
             Check(result.Copied == 0 && result.Skipped == 0 && result.Errors.Length == 1 && Program.FormatCopySummary(result).Contains("Скопировано файлов: 0"),
                 "Ошибка создания папки назначения не содержит итог копирования.");
+            string tree = Path.Combine(root, "Папка [1] & обмен");
+            string deep = Path.Combine(tree, "Вложенная", "Глубже");
+            Directory.CreateDirectory(deep);
+            Directory.CreateDirectory(Path.Combine(tree, "Пустая"));
+            string treeFile = Path.Combine(tree, "корень.txt");
+            string hiddenFile = Path.Combine(deep, "скрытый.txt");
+            File.WriteAllText(treeFile, "Корень");
+            File.WriteAllText(hiddenFile, "Глубокий файл");
+            File.SetAttributes(hiddenFile, FileAttributes.Hidden);
+            string recursiveTarget = Path.Combine(root, "recursive");
+            result = FileCopier.Copy(new CopyRequest(recursiveTarget, [tree + Path.DirectorySeparatorChar, extra]),
+                _ => throw new InvalidOperationException("Запрошена перезапись в новой структуре."));
+            string copiedTree = Path.Combine(recursiveTarget, Path.GetFileName(tree));
+            string copiedTreeFile = Path.Combine(copiedTree, "корень.txt");
+            string copiedHidden = Path.Combine(copiedTree, "Вложенная", "Глубже", "скрытый.txt");
+            Check(result.Copied == 3 && result.CreatedDirectories == 4 && result.Errors.Length == 0 &&
+                File.ReadAllText(copiedHidden) == "Глубокий файл" && Directory.Exists(Path.Combine(copiedTree, "Пустая")) &&
+                File.ReadAllText(Path.Combine(recursiveTarget, Path.GetFileName(extra))) == "OK", "Папка, пустые каталоги, скрытые файлы или смешанное выделение скопированы не полностью.");
+            Check(Program.FormatCopySummary(result).Contains("Создано папок: 4"), "Созданные папки не попали в итог.");
+            File.WriteAllText(treeFile, "Обновление");
+            File.WriteAllText(Path.Combine(copiedTree, "только в назначении.txt"), "Сохранить");
+            prompts = 0;
+            result = FileCopier.Copy(new CopyRequest(recursiveTarget, [tree]), path =>
+            {
+                prompts++;
+                return path != copiedTreeFile;
+            });
+            Check(prompts == 2 && result.Copied == 1 && result.Skipped == 1 && result.CreatedDirectories == 0 && result.Errors.Length == 0 &&
+                File.ReadAllText(copiedTreeFile) == "Корень", "Слияние папок не запросило перезапись каждого файла или проигнорировало отказ.");
+            result = FileCopier.Copy(new CopyRequest(recursiveTarget, [tree]), _ => true);
+            Check(result.Copied == 2 && result.Errors.Length == 0 && File.ReadAllText(copiedTreeFile) == "Обновление" &&
+                File.ReadAllText(Path.Combine(copiedTree, "только в назначении.txt")) == "Сохранить", "Слияние потеряло файлы назначения или не выполнило подтверждённую перезапись.");
+            result = FileCopier.Copy(new CopyRequest(deep, [tree]), _ => true);
+            Check(result.Copied == 0 && result.Errors.Length == 1 && !Directory.Exists(Path.Combine(deep, Path.GetFileName(tree))),
+                "Копирование папки в саму себя запустило рекурсию.");
+            string blocked = Path.Combine(root, "blocked");
+            Directory.CreateDirectory(blocked);
+            string conflict = Path.Combine(blocked, Path.GetFileName(tree));
+            File.WriteAllText(conflict, "Существующий файл");
+            result = FileCopier.Copy(new CopyRequest(blocked, [tree, extra]), _ => true);
+            Check(result.Copied == 1 && result.Errors.Length == 1 && File.ReadAllText(conflict) == "Существующий файл",
+                "Конфликт файла с папкой затёр данные или остановил остальные объекты.");
+            File.WriteAllText(Path.Combine(root, "MakeJunction.ps1"), """
+                param([string]$InstallDirectory)
+                $ErrorActionPreference = 'Stop'
+                [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+                $source = Join-Path $InstallDirectory 'link-source'
+                New-Item -ItemType Junction -Path (Join-Path $InstallDirectory 'alias') -Target $source | Out-Null
+                New-Item -ItemType Junction -Path (Join-Path $source 'cycle') -Target $source | Out-Null
+                """, new System.Text.UTF8Encoding(true));
+            string linkSource = Path.Combine(root, "link-source");
+            Directory.CreateDirectory(linkSource);
+            File.WriteAllText(Path.Combine(linkSource, "inside.txt"), "Проверка соединений");
+            Program.RunInstallScript("MakeJunction.ps1", root);
+            try
+            {
+                result = FileCopier.Copy(new CopyRequest(Path.Combine(root, "alias"), [linkSource]), _ => true);
+                Check(result.Copied == 0 && result.Errors.Length == 1, "Соединение папок обошло защиту копирования в себя.");
+                result = FileCopier.Copy(new CopyRequest(Path.Combine(root, "with-link"), [linkSource]), _ => true);
+                Check(result.Copied == 1 && result.Errors.Length == 1 && !Directory.Exists(Path.Combine(root, "with-link", Path.GetFileName(linkSource), "cycle")),
+                    "Циклическое соединение запустило бесконечное копирование или остановило обычные файлы.");
+            }
+            finally
+            {
+                Directory.Delete(Path.Combine(linkSource, "cycle"));
+                Directory.Delete(Path.Combine(root, "alias"));
+            }
             File.WriteAllText(config, "повреждённый JSON");
             bool rejected = false;
             try { ExchangeStore.Read(config); }
@@ -116,7 +183,7 @@ internal static class SelfTest
             string registrationLog = File.ReadAllText(Path.Combine(root, "Fail.log"));
             Check(registrationLog.Contains("Вывод регистрации") && registrationLog.Contains("Ошибка регистрации"),
                 "Журнал регистрации потерял вывод скрипта.");
-            Console.WriteLine("OK: название родителя, добавление/изменение/удаление и дубликаты, 25 файлов, перезапись, итоги, ошибки, защита исходников, журнал регистрации.");
+            Console.WriteLine("OK: настройки, 25 файлов, рекурсивные и пустые папки, смешанное выделение, слияние и перезапись, защита от рекурсии и ссылок, итоги, журнал регистрации.");
             return 0;
         }
         finally

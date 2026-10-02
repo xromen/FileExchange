@@ -108,7 +108,7 @@ internal unsafe partial class ShellCommand : IExplorerCommand
     {
         if (tooltip == null) return Com.Pointer;
         *tooltip = 0;
-        try { return Com.String(destination == null ? "Копирование выделенных файлов" : "Копировать в " + destination.DestinationPath, tooltip); }
+        try { return Com.String(destination == null ? "Копирование выделенных файлов и папок" : "Копировать в " + destination.DestinationPath, tooltip); }
         catch (Exception e) { return e.HResult; }
     }
 
@@ -134,7 +134,7 @@ internal unsafe partial class ShellCommand : IExplorerCommand
         if (okToBeSlow == 0) return unchecked((int)0x8000000A); // E_PENDING
         try
         {
-            if ((destination != null || ExchangeStore.Read().Length != 0) && Selection.IsFiles(items))
+            if ((destination != null || ExchangeStore.Read().Length != 0) && Selection.IsFileSystemItems(items))
                 *state = 0; // ECS_ENABLED
             return Com.Ok;
         }
@@ -147,7 +147,7 @@ internal unsafe partial class ShellCommand : IExplorerCommand
         string? requestPath = null;
         try
         {
-            if (!Selection.IsFiles(items)) return Com.InvalidArgument;
+            if (!Selection.IsFileSystemItems(items)) return Com.InvalidArgument;
             string[] paths = Selection.FilePaths(items);
             string requests = ExchangeStore.RequestsDirectory;
             Directory.CreateDirectory(requests);
@@ -247,19 +247,18 @@ internal unsafe partial class CommandEnumerator(Destination[] destinations, int 
 
 internal static unsafe class Selection
 {
-    private const uint FileSystem = 0x40000000, Folder = 0x20000000;
+    private const uint FileSystem = 0x40000000;
 
-    public static bool IsFiles(nint items)
+    public static bool IsFileSystemItems(nint items)
     {
         if (items == 0) return false;
         nint* table = *(nint**)items;
-        uint count = 0, all = 0, any = 0;
+        uint count = 0, all = 0;
         Com.Check(((delegate* unmanaged[Stdcall]<nint, uint*, int>)table[7])(items, &count));
         if (count == 0) return false;
         var attributes = (delegate* unmanaged[Stdcall]<nint, uint, uint, uint*, int>)table[6];
         Com.Check(attributes(items, 1, FileSystem, &all)); // SIATTRIBFLAGS_AND
-        Com.Check(attributes(items, 2, Folder, &any)); // SIATTRIBFLAGS_OR
-        return (all & FileSystem) != 0 && (any & Folder) == 0;
+        return (all & FileSystem) != 0;
     }
 
     public static string[] FilePaths(nint items)
@@ -274,10 +273,10 @@ internal static unsafe class Selection
             try
             {
                 Com.Check(((delegate* unmanaged[Stdcall]<nint, uint, nint*, int>)table[8])(items, i, &item));
-                if (item == 0) throw new COMException("Проводник не вернул выделенный файл.");
+                if (item == 0) throw new COMException("Проводник не вернул выделенный объект.");
                 nint* itemTable = *(nint**)item;
                 Com.Check(((delegate* unmanaged[Stdcall]<nint, uint, nint*, int>)itemTable[5])(item, 0x80058000, &name)); // SIGDN_FILESYSPATH
-                result[i] = Marshal.PtrToStringUni(name) ?? throw new COMException("Проводник не вернул путь файла.");
+                result[i] = Marshal.PtrToStringUni(name) ?? throw new COMException("Проводник не вернул путь файла или папки.");
             }
             finally
             {

@@ -65,7 +65,7 @@ internal static unsafe class Program
         try
         {
             Assert(Com.Interface(new FakeSelection(25), FakeSelection.InterfaceId, &items) == 0, "Создание тестового выделения.");
-            Assert(Selection.IsFiles(items), "Выделение файлов.");
+            Assert(Selection.IsFileSystemItems(items), "Выделение файлов.");
             string[] paths = Selection.FilePaths(items);
             Assert(paths.Length == 25 && paths.Select((path, i) => path == FakeSelection.PathAt(i)).All(value => value), "Все 25 путей сохранены.");
             Destination[] destinations = [new("На сервер", @"\\server\share"), new("В архив", @"D:\Архив")];
@@ -77,10 +77,14 @@ internal static unsafe class Program
             Assert(leaf.GetState(items, 0, &state) == unchecked((int)0x8000000A), "Медленная проверка отложена.");
             Release(items); items = 0;
             Assert(Com.Interface(new FakeSelection(2, folders: true), FakeSelection.InterfaceId, &items) == 0, "Выделение с папкой.");
-            Assert(!Selection.IsFiles(items) && leaf.GetState(items, 1, &state) == 0 && state == 2, "Папки скрывают подпункт.");
-            Assert(leaf.Invoke(items, 0) == unchecked((int)0x80070057), "Копирование папок отклонено.");
+            Assert(Selection.IsFileSystemItems(items) && leaf.GetState(items, 1, &state) == 0 && state == 0, "Папки включают подпункт.");
+            Assert(Selection.FilePaths(items).Length == 2, "Пути папок переданы полностью.");
             Release(items); items = 0;
-            Assert(Com.Interface(new FakeSelection(2, filesystem: false), FakeSelection.InterfaceId, &items) == 0 && !Selection.IsFiles(items), "Виртуальные объекты отклонены.");
+            Assert(Com.Interface(new FakeSelection(2, folders: true, mixed: true), FakeSelection.InterfaceId, &items) == 0 &&
+                Selection.IsFileSystemItems(items) && leaf.GetState(items, 1, &state) == 0 && state == 0, "Смешанное выделение включает подпункт.");
+            Release(items); items = 0;
+            Assert(Com.Interface(new FakeSelection(2, filesystem: false), FakeSelection.InterfaceId, &items) == 0 && !Selection.IsFileSystemItems(items), "Виртуальные объекты отклонены.");
+            Assert(leaf.Invoke(items, 0) == unchecked((int)0x80070057), "Копирование виртуальных объектов отклонено.");
             Console.WriteLine("Выделение проверено: 25 файлов, папки, виртуальные объекты, 2 динамических подпункта.");
         }
         finally

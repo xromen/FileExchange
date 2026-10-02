@@ -9,6 +9,7 @@ foreach ($package in @(Get-AppxPackage -Name FileExchange | Where-Object { $_.Pu
     Remove-AppxPackage -Package $package.PackageFullName -ErrorAction Stop
 }
 [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree('Software\Classes\*\shell\FileExchange.Menu', $false)
+[Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree('Software\Classes\Directory\shell\FileExchange.Menu', $false)
 [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree('Software\Classes\CLSID\{B687DD84-18AA-4A7A-B6D3-3B4A4FBA2F92}', $false)
 $markerPath = Join-Path ([IO.Path]::GetFullPath($InstallDirectory)) '.registered-package.sha256'
 if ([IO.File]::Exists($markerPath)) { [IO.File]::Delete($markerPath) }

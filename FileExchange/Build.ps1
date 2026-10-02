@@ -5,11 +5,16 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+$version = & dotnet msbuild (Join-Path $PSScriptRoot 'App\FileExchange.csproj') -nologo -verbosity:quiet -target:GetFileExchangeVersion -getProperty:Version
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось вычислить версию проекта из истории Git.' }
+$version = ([string]$version).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Некорректная версия проекта: $version" }
+$archiveName = "FileExchange-$version-win-x64.zip"
 $output = Join-Path $PSScriptRoot 'artifacts\app'
 $packageDirectory = Join-Path $PSScriptRoot 'artifacts\package'
 $privateKeyPath = Join-Path $PSScriptRoot 'artifacts\temporary-signing-key.pfx'
 $packagePath = Join-Path $output 'FileExchange.msix'
-$archivePath = Join-Path $PSScriptRoot 'artifacts\FileExchange-win-x64.zip'
+$archivePath = Join-Path (Join-Path $PSScriptRoot 'artifacts') $archiveName
 [void][IO.Directory]::CreateDirectory($output)
 [void][IO.Directory]::CreateDirectory($packageDirectory)
 
@@ -39,8 +44,14 @@ if ($manifest.SelectSingleNode('//*[local-name()="requestedExecutionLevel"]').Ge
 & dotnet publish (Join-Path $PSScriptRoot 'ShellExtension\FileExchange.ShellExtension.csproj') -c Release -r win-x64 -p:PublishAot=true -p:NativeLib=Shared -p:DebugType=None -o $output
 if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать NativeAOT DLL.' }
 [IO.File]::Delete((Join-Path $output 'FileExchange.ShellExtension.pdb'))
+foreach ($binary in @('FileExchange.exe', 'FileExchange.Manager.exe', 'FileExchange.ShellExtension.dll')) {
+    $productVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $output $binary)).ProductVersion
+    if ($productVersion.Split('+')[0] -ne $version) { throw "Версия $binary ($productVersion) не совпадает с версией проекта $version." }
+}
 
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Packaging\AppxManifest.xml') -Destination (Join-Path $packageDirectory 'AppxManifest.xml')
+[xml]$packageManifest = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Packaging\AppxManifest.xml'))
+$packageManifest.Package.Identity.Version = "$version.0"
+$packageManifest.Save((Join-Path $packageDirectory 'AppxManifest.xml'))
 foreach ($script in @('Install.ps1', 'Uninstall.ps1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Packaging\$script") -Destination (Join-Path $output $script)
 }
@@ -119,5 +130,8 @@ try {
 }
 finally { $archive.Dispose() }
 
+$releaseInfo = @{ Version = $version; ArchiveName = $archiveName } | ConvertTo-Json
+[IO.File]::WriteAllText((Join-Path $PSScriptRoot 'artifacts\release.json'), $releaseInfo, [Text.UTF8Encoding]::new($false))
+Write-Host "Версия: $version"
 Write-Host "Готово: $output"
 Write-Host "Проверен архив: $archivePath"

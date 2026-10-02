@@ -24,7 +24,7 @@
   </Dependencies>
   <Applications>
     <Application Id="FileExchange" Executable="FileExchange.exe" uap10:TrustLevel="mediumIL" uap10:RuntimeBehavior="win32App">
-      <uap:VisualElements AppListEntry="none" DisplayName="Файловый обмен" Description="Копирование выбранных файлов в настроенные папки"
+      <uap:VisualElements AppListEntry="none" DisplayName="Файловый обмен" Description="Копирование выбранных файлов и папок в настроенные папки"
                           BackgroundColor="transparent" Square150x150Logo="Assets\Logo150.png" Square44x44Logo="Assets\Logo44.png" />
       <Extensions>
         <com:Extension Category="windows.comServer">
@@ -38,6 +38,9 @@
           <desktop4:FileExplorerContextMenus>
             <desktop5:ItemType Type="*">
               <desktop5:Verb Id="FileExchange" Clsid="B687DD84-18AA-4A7A-B6D3-3B4A4FBA2F92" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="FileExchangeDirectory" Clsid="B687DD84-18AA-4A7A-B6D3-3B4A4FBA2F92" />
             </desktop5:ItemType>
           </desktop4:FileExplorerContextMenus>
         </desktop4:Extension>

@@ -26,7 +26,7 @@ internal unsafe partial interface ITestShellItem
 }
 
 [GeneratedComClass]
-internal unsafe partial class FakeSelection(uint count, bool folders = false, bool filesystem = true) : ITestShellItemArray
+internal unsafe partial class FakeSelection(uint count, bool folders = false, bool filesystem = true, bool mixed = false) : ITestShellItemArray
 {
     internal static readonly Guid InterfaceId = typeof(ITestShellItemArray).GUID;
     internal static string PathAt(int index) => @"C:\выделение\файл " + index + ".txt";
@@ -37,7 +37,7 @@ internal unsafe partial class FakeSelection(uint count, bool folders = false, bo
     public int GetCount(uint* result) { *result = count; return Com.Ok; }
     public int GetAttributes(uint flags, uint mask, uint* result)
     {
-        *result = mask & ((filesystem ? 0x40000000u : 0) | (folders ? 0x20000000u : 0));
+        *result = mask & ((filesystem ? 0x40000000u : 0) | (folders && (!mixed || flags != 1) ? 0x20000000u : 0));
         return *result == mask ? Com.Ok : Com.False;
     }
     public int GetItemAt(uint index, nint* result) => index >= count ? Com.InvalidArgument :
