@@ -24,7 +24,7 @@ internal static partial class Program
             if (args is ["--install"])
             {
                 EnsureInstalled();
-                Console.WriteLine("Меню «Файловый обмен» зарегистрировано для текущего пользователя.");
+                Console.WriteLine($"Меню «{ExchangeStore.ReadParentName()}» зарегистрировано для текущего пользователя.");
                 return 0;
             }
             if (args is ["--uninstall"])
@@ -43,8 +43,8 @@ internal static partial class Program
             Destination destination = ExchangeStore.Validate(args[0], args[1]);
             EnsureInstalled();
             ExchangeStore.AddOrUpdate(destination);
-            SHChangeNotify(0x08000000, 0, 0, 0); // SHCNE_ASSOCCHANGED
-            Console.WriteLine($"Добавлен или обновлён пункт: Файловый обмен > {destination.Name}");
+            ShellNotification.Refresh();
+            Console.WriteLine($"Добавлен или обновлён пункт: {ExchangeStore.ReadParentName()} > {destination.Name}");
             Console.WriteLine($"Папка назначения: {destination.DestinationPath}");
             return 0;
         }
@@ -86,16 +86,18 @@ internal static partial class Program
     {
         string source = Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar);
         string installed = Path.Combine(ExchangeStore.DataDirectory, "bin");
-        string[] required = ["FileExchange.exe", "FileExchange.ShellExtension.dll", "FileExchange.msix", "FileExchange.cer", "Install.ps1", "Uninstall.ps1"];
+        string[] required = ["FileExchange.exe", "FileExchange.ShellExtension.dll", "FileExchange.msix", "FileExchange.cer", "Install.ps1", "Uninstall.ps1", "Assets\\Logo44.png", "Assets\\Logo150.png"];
         foreach (string name in required)
             if (!File.Exists(Path.Combine(source, name)))
                 throw new FileNotFoundException($"Не найден {name}. Сначала запустите Build.ps1 и используйте EXE из artifacts\\app.");
         Directory.CreateDirectory(installed);
         if (!string.Equals(source, installed, StringComparison.OrdinalIgnoreCase))
         {
-            foreach (string file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+            // The manager stays portable: updating the extension must not replace its running EXE.
+            foreach (string name in required)
             {
-                string target = Path.Combine(installed, Path.GetRelativePath(source, file));
+                string file = Path.Combine(source, name);
+                string target = Path.Combine(installed, name);
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 if (File.Exists(target) && FilesEqual(file, target)) continue;
                 try { File.Copy(file, target, overwrite: true); }
@@ -128,6 +130,11 @@ internal static partial class Program
         };
         foreach (string argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-InstallDirectory", installDirectory })
             start.ArgumentList.Add(argument);
+        if (scriptName == "Install.ps1")
+        {
+            start.ArgumentList.Add("-ParentMenuName");
+            start.ArgumentList.Add(ExchangeStore.ReadParentName());
+        }
         using var process = Process.Start(start) ?? throw new IOException("Не удалось запустить регистрацию меню.");
         // Читаем оба потока одновременно: большой вывод не должен заблокировать дочерний процесс.
         var outputTask = process.StandardOutput.ReadToEndAsync();
@@ -156,6 +163,4 @@ internal static partial class Program
     [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
     private static partial int MessageBoxW(nint window, string text, string caption, uint type);
 
-    [LibraryImport("shell32.dll")]
-    private static partial void SHChangeNotify(uint eventId, uint flags, nint item1, nint item2);
 }

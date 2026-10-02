@@ -29,13 +29,15 @@ jobs:
         shell: powershell
         run: .\FileExchange\Build.ps1
 
-      - name: Проверить копирование, COM и диагностику установки
+      - name: Проверить копирование, COM, WPF и диагностику установки
         shell: powershell
         run: |
           & .\FileExchange\artifacts\app\FileExchange.exe --self-test
           if ($LASTEXITCODE -ne 0) { throw 'Не прошла проверка программы.' }
           dotnet run --project .\FileExchange\ShellExtension\AbiCheck\AbiCheck.csproj -c Release -- .\FileExchange\artifacts\app\FileExchange.ShellExtension.dll
           if ($LASTEXITCODE -ne 0) { throw 'Не прошла проверка COM.' }
+          dotnet .\FileExchange\Manager\bin\Release\net10.0-windows\win-x64\FileExchange.Manager.dll --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Не прошла проверка WPF-приложения.' }
           & .\FileExchange\Packaging\Test-InstallErrors.ps1
 
       - name: Опубликовать GitHub Release

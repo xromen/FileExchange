@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace FileExchange.Shared;
 
 public sealed record CopyResult(int Copied, int Skipped, string[] Errors);

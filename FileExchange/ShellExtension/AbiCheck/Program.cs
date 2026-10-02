@@ -29,7 +29,7 @@ internal static unsafe class Program
             var create = (delegate* unmanaged[Stdcall]<nint, nint, Guid*, nint*, int>)Table(factory)[3];
             Assert(create(factory, factory, &commandId, &pointer) == unchecked((int)0x80040110) && pointer == 0, "Агрегация COM запрещена.");
             Assert(create(factory, 0, &commandId, &command) == 0 && command != 0, "IExplorerCommand.");
-            Assert(Title(command) == "Файловый обмен", "Название родителя.");
+            Assert(Title(command) == ExchangeStore.ReadParentName(), "Название родителя из настроек.");
             uint flags = 0, state = 99;
             Assert(((delegate* unmanaged[Stdcall]<nint, uint*, int>)Table(command)[9])(command, &flags) == 0 && flags == 1, "ECF_HASSUBCOMMANDS.");
             Assert(((delegate* unmanaged[Stdcall]<nint, nint, int, uint*, int>)Table(command)[7])(command, 0, 1, &state) == 0 && state == 2, "Пустое выделение скрыто.");

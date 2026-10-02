@@ -17,6 +17,34 @@ internal static class SelfTest
             ExchangeStore.AddOrUpdate(ExchangeStore.Validate("АРХИВ", target), config);
             Destination[] entries = ExchangeStore.Read(config);
             Check(entries.Length == 2 && entries[0].Name == "АРХИВ", "Повторный запуск создал дубликат подпункта.");
+            string settings = Path.Combine(root, "settings.json");
+            Check(ExchangeStore.ReadParentName(settings) == "Файловый обмен", "Не задано название меню по умолчанию.");
+            ExchangeStore.SetParentName("  Передать файлы  ", settings);
+            Check(ExchangeStore.ReadParentName(settings) == "Передать файлы", "Название родителя не сохранено.");
+            string savedSettings = File.ReadAllText(settings);
+            bool invalidName = false;
+            try { ExchangeStore.SetParentName("   ", settings); }
+            catch (ArgumentException) { invalidName = true; }
+            Check(invalidName && File.ReadAllText(settings) == savedSettings, "Пустое название затёрло настройки.");
+            string guiConfig = Path.Combine(root, "gui-destinations.json");
+            var first = ExchangeStore.Validate("Первый", Path.Combine(root, "first"));
+            ExchangeStore.SaveDestination(null, first, guiConfig);
+            ExchangeStore.SaveDestination(null, ExchangeStore.Validate("Второй", Path.Combine(root, "second")), guiConfig);
+            ExchangeStore.SaveDestination("Первый", ExchangeStore.Validate("Переименован", target), guiConfig);
+            Check(ExchangeStore.Read(guiConfig)[0] == new Destination("Переименован", target), "Редактирование создало новый пункт или потеряло папку.");
+            string savedEntries = File.ReadAllText(guiConfig);
+            bool duplicate = false;
+            try { ExchangeStore.SaveDestination("Переименован", ExchangeStore.Validate("ВТОРОЙ", target), guiConfig); }
+            catch (ArgumentException) { duplicate = true; }
+            Check(duplicate && File.ReadAllText(guiConfig) == savedEntries, "Переименование затёрло другой пункт.");
+            duplicate = false;
+            try { ExchangeStore.SaveDestination(null, ExchangeStore.Validate("второй", target), guiConfig); }
+            catch (ArgumentException) { duplicate = true; }
+            Check(duplicate && File.ReadAllText(guiConfig) == savedEntries, "Добавление затёрло существующий пункт.");
+            ExchangeStore.RemoveDestination("переименован", guiConfig);
+            Check(ExchangeStore.Read(guiConfig).Length == 1 && ExchangeStore.Read(guiConfig)[0].Name == "Второй", "Удалён неверный пункт.");
+            ExchangeStore.RemoveDestination("Второй", guiConfig);
+            Check(ExchangeStore.Read(guiConfig).Length == 0, "Последний пункт не удалён.");
 
             string[] sources = Enumerable.Range(0, 25).Select(index => Path.Combine(root, $"файл [{index}] & $.txt")).ToArray();
             foreach (string source in sources) File.WriteAllText(source, $"Содержимое: {Path.GetFileName(source)}");
@@ -88,7 +116,7 @@ internal static class SelfTest
             string registrationLog = File.ReadAllText(Path.Combine(root, "Fail.log"));
             Check(registrationLog.Contains("Вывод регистрации") && registrationLog.Contains("Ошибка регистрации"),
                 "Журнал регистрации потерял вывод скрипта.");
-            Console.WriteLine("OK: 25 файлов, запрос и отказ перезаписи, итоговые счётчики, ошибки, защита исходников, подпункты, журнал регистрации.");
+            Console.WriteLine("OK: название родителя, добавление/изменение/удаление и дубликаты, 25 файлов, перезапись, итоги, ошибки, защита исходников, журнал регистрации.");
             return 0;
         }
         finally

@@ -22,9 +22,20 @@ if ($null -eq $sdkDirectory) { throw 'Установите Windows SDK: не н�
 $makeAppx = Join-Path $sdkDirectory.FullName 'x64\makeappx.exe'
 $signTool = Join-Path $sdkDirectory.FullName 'x64\signtool.exe'
 if (-not [IO.File]::Exists($signTool)) { throw 'В Windows SDK не найден SignTool.exe.' }
+$manifestTool = Join-Path $sdkDirectory.FullName 'x64\mt.exe'
+if (-not [IO.File]::Exists($manifestTool)) { throw 'В Windows SDK не найден Mt.exe.' }
 
 & dotnet publish (Join-Path $PSScriptRoot 'App\FileExchange.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o $output
 if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать FileExchange.exe.' }
+& dotnet publish (Join-Path $PSScriptRoot 'Manager\FileExchange.Manager.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o $output
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать WPF-приложение управления.' }
+$managerManifest = Join-Path $PSScriptRoot 'artifacts\manager.manifest.xml'
+& $manifestTool "-inputresource:$(Join-Path $output 'FileExchange.Manager.exe');#1" "-out:$managerManifest"
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось проверить манифест WPF-приложения.' }
+[xml]$manifest = [IO.File]::ReadAllText($managerManifest)
+if ($manifest.SelectSingleNode('//*[local-name()="requestedExecutionLevel"]').GetAttribute('level') -ne 'requireAdministrator') {
+    throw 'WPF-приложение должно требовать права администратора.'
+}
 & dotnet publish (Join-Path $PSScriptRoot 'ShellExtension\FileExchange.ShellExtension.csproj') -c Release -r win-x64 -p:PublishAot=true -p:NativeLib=Shared -p:DebugType=None -o $output
 if ($LASTEXITCODE -ne 0) { throw 'Не удалось собрать NativeAOT DLL.' }
 [IO.File]::Delete((Join-Path $output 'FileExchange.ShellExtension.pdb'))
@@ -83,7 +94,7 @@ finally {
 
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $releaseFiles = @(
-    'FileExchange.exe', 'FileExchange.ShellExtension.dll', 'FileExchange.msix', 'FileExchange.cer',
+    'FileExchange.exe', 'FileExchange.Manager.exe', 'FileExchange.ShellExtension.dll', 'FileExchange.msix', 'FileExchange.cer',
     'Install.ps1', 'Uninstall.ps1', 'README.md', 'Assets/Logo44.png', 'Assets/Logo150.png'
 )
 [IO.File]::Delete($archivePath)

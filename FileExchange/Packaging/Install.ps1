@@ -1,6 +1,6 @@
 ﻿#Requires -Version 5.1
 [CmdletBinding()]
-param([string]$InstallDirectory = $PSScriptRoot)
+param([string]$InstallDirectory = $PSScriptRoot, [string]$ParentMenuName = 'Файловый обмен')
 
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -8,6 +8,7 @@ $OutputEncoding = [Console]::OutputEncoding
 Set-StrictMode -Version Latest
 
 $InstallDirectory = [IO.Path]::GetFullPath($InstallDirectory)
+if ([string]::IsNullOrWhiteSpace($ParentMenuName)) { throw 'Название родительского меню не должно быть пустым.' }
 $dllPath = Join-Path $InstallDirectory 'FileExchange.ShellExtension.dll'
 foreach ($file in @('FileExchange.exe', 'FileExchange.ShellExtension.dll', 'FileExchange.msix', 'FileExchange.cer')) {
     if (-not [IO.File]::Exists((Join-Path $InstallDirectory $file))) { throw "Не найден установочный файл: $file" }
@@ -96,7 +97,7 @@ else {
     finally { $classKey.Dispose() }
     $menuKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($menuKeyPath)
     try {
-        $menuKey.SetValue('MUIVerb', 'Файловый обмен')
+        $menuKey.SetValue('MUIVerb', $ParentMenuName.Trim())
         $menuKey.SetValue('ExplorerCommandHandler', $classId)
         $menuKey.SetValue('MultiSelectModel', 'Player')
     }
@@ -107,4 +108,4 @@ if (-not ('FileExchangeShellNotification' -as [type])) {
     Add-Type 'using System; using System.Runtime.InteropServices; public static class FileExchangeShellNotification { [DllImport("shell32.dll")] public static extern void SHChangeNotify(uint eventId, uint flags, IntPtr item1, IntPtr item2); }'
 }
 [FileExchangeShellNotification]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
-Write-Host 'Расширение «Файловый обмен» установлено для текущего пользователя.'
+Write-Host "Расширение «$ParentMenuName» установлено для текущего пользователя."

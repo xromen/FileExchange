@@ -88,7 +88,13 @@ internal unsafe partial class ShellCommand : IExplorerCommand
     private readonly Destination? destination;
     public ShellCommand(Destination? destination = null) => this.destination = destination;
 
-    public int GetTitle(nint items, nint* title) => Com.String(destination?.Name ?? "Файловый обмен", title);
+    public int GetTitle(nint items, nint* title)
+    {
+        if (title == null) return Com.Pointer;
+        *title = 0;
+        try { return Com.String(destination?.Name ?? ExchangeStore.ReadParentName(), title); }
+        catch (Exception error) { return error.HResult; }
+    }
 
     public int GetIcon(nint items, nint* icon)
     {
