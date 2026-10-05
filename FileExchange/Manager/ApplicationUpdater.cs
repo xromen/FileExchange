@@ -21,17 +21,22 @@ internal static class ApplicationUpdater
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromMinutes(10) };
     private static string SuppressionPath => Path.Combine(ExchangeStore.DataDirectory, "update-prompts-disabled");
 
-    internal static bool PromptsSuppressed(string? path = null) => File.Exists(path ?? SuppressionPath);
+    internal static bool StartupCheckEnabled(string? path = null) => !File.Exists(path ?? SuppressionPath);
 
-    internal static void SuppressPrompts(string? path = null)
+    internal static void SetStartupCheck(bool enabled, string? path = null)
     {
         path ??= SuppressionPath;
+        if (enabled)
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return;
+        }
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, "Автоматические предложения обновления отключены пользователем.");
+        File.WriteAllText(path, "Проверка обновления при запуске отключена пользователем.");
     }
 
-    internal static bool ShouldOffer(Version current, Version latest, bool manual, bool suppressed) =>
-        latest > current && (manual || !suppressed);
+    internal static bool ShouldOffer(Version current, Version latest, bool manual, bool startupEnabled) =>
+        latest > current && (manual || startupEnabled);
 
     internal static async Task<GitHubRelease?> CheckAsync(CancellationToken cancellationToken, HttpClient? client = null)
     {

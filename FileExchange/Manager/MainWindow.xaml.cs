@@ -39,6 +39,11 @@ public partial class MainWindow : Window
     private async Task CheckForUpdates(bool manual, bool allowPrompt = true)
     {
         if (checkingUpdate || busy || closed) return;
+        if (!manual && !ApplicationUpdater.StartupCheckEnabled())
+        {
+            ReleaseVersionText.Text = "Версия в GitHub Releases: проверка при запуске выключена";
+            return;
+        }
         checkingUpdate = true;
         CheckUpdateButton.IsEnabled = false;
         ReleaseVersionText.Text = "Версия в GitHub Releases: проверяется…";
@@ -59,16 +64,16 @@ public partial class MainWindow : Window
                 if (manual) MessageBox.Show(this, "Установлена актуальная версия приложения.", "Файловый обмен — обновление", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
-            if (!allowPrompt || !ApplicationUpdater.ShouldOffer(ApplicationUpdater.CurrentVersion, release.Version, manual, ApplicationUpdater.PromptsSuppressed())) return;
+            if (!allowPrompt || !ApplicationUpdater.ShouldOffer(ApplicationUpdater.CurrentVersion, release.Version, manual, ApplicationUpdater.StartupCheckEnabled())) return;
             var answer = MessageBox.Show(this,
-                $"Доступна версия {release.Version}. Текущая версия: {ApplicationUpdater.CurrentVersion}.\r\n\r\nОбновить приложение? Оно будет закрыто и запущено снова.\r\n\r\nЕсли выбрать «Нет», предложения при запуске будут отключены. Проверить обновление можно вручную.",
+                $"Доступна версия {release.Version}. Текущая версия: {ApplicationUpdater.CurrentVersion}.\r\n\r\nОбновить приложение? Оно будет закрыто и запущено снова.\r\n\r\nЕсли выбрать «Нет», проверка обновления при запуске будет выключена. Включить её снова можно в настройках; ручная проверка всегда доступна.",
                 "Файловый обмен — обновление", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
             if (answer != MessageBoxResult.Yes)
             {
                 Execute(() =>
                 {
-                    ApplicationUpdater.SuppressPrompts();
-                    StatusText.Text = "Предложения обновления при запуске отключены. Ручная проверка доступна.";
+                    SaveStartupUpdateCheck(false);
+                    StatusText.Text = "Проверка обновления при запуске выключена. Ручная проверка доступна.";
                 });
                 return;
             }
@@ -111,6 +116,7 @@ public partial class MainWindow : Window
 
     private void LoadSettings() => Execute(() =>
     {
+        StartupUpdateCheckBox.IsChecked = ApplicationUpdater.StartupCheckEnabled();
         var settings = ExchangeStore.ReadSettings();
         ParentNameBox.Text = settings.ParentName;
         OpenFolderAfterCopyBox.IsChecked = settings.OpenFolderAfterCopy;
@@ -155,6 +161,18 @@ public partial class MainWindow : Window
 
     private void SaveSettings() => ExchangeStore.SaveSettings(new MenuSettings(ParentNameBox.Text,
         OpenFolderAfterCopyBox.IsChecked == true, CopyFolderPathAfterCopyBox.IsChecked == true));
+
+    private void StartupUpdateCheck_Click(object sender, RoutedEventArgs e) => Execute(() =>
+    {
+        SaveStartupUpdateCheck(StartupUpdateCheckBox.IsChecked == true);
+        StatusText.Text = "Настройка проверки обновления при запуске сохранена.";
+    });
+
+    internal void SaveStartupUpdateCheck(bool enabled, string? path = null)
+    {
+        try { ApplicationUpdater.SetStartupCheck(enabled, path); }
+        finally { StartupUpdateCheckBox.IsChecked = ApplicationUpdater.StartupCheckEnabled(path); }
+    }
 
     private void DestinationList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {

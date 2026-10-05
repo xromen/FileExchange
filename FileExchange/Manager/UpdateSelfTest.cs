@@ -17,14 +17,18 @@ internal static class UpdateSelfTest
         try
         {
             string suppressed = Path.Combine(root, "update-prompts-disabled");
-            Check(!ApplicationUpdater.PromptsSuppressed(suppressed), "Предложения отключены при первом запуске.");
-            ApplicationUpdater.SuppressPrompts(suppressed);
-            Check(ApplicationUpdater.PromptsSuppressed(suppressed), "Отказ от обновления не сохранён.");
+            Check(ApplicationUpdater.StartupCheckEnabled(suppressed), "Проверка выключена при первом запуске.");
+            ApplicationUpdater.SetStartupCheck(false, suppressed);
+            Check(!ApplicationUpdater.StartupCheckEnabled(suppressed), "Отказ от обновления не сохранён.");
+            ApplicationUpdater.SetStartupCheck(true, suppressed);
+            Check(ApplicationUpdater.StartupCheckEnabled(suppressed) && !File.Exists(suppressed), "Не удалось снова включить проверку обновления.");
+            ApplicationUpdater.SetStartupCheck(false, suppressed);
+            Check(!ApplicationUpdater.StartupCheckEnabled(suppressed), "Повторное отключение проверки не сохранено.");
             var current = new Version(1, 0, 9);
             var next = new Version(1, 0, 10);
-            Check(!ApplicationUpdater.ShouldOffer(current, next, false, true) && !ApplicationUpdater.ShouldOffer(current, new Version(1, 0, 11), false, true) &&
-                ApplicationUpdater.ShouldOffer(current, next, true, true) && ApplicationUpdater.ShouldOffer(current, next, false, false) &&
-                !ApplicationUpdater.ShouldOffer(current, current, true, false) && !ApplicationUpdater.ShouldOffer(next, current, false, false),
+            Check(!ApplicationUpdater.ShouldOffer(current, next, false, false) && !ApplicationUpdater.ShouldOffer(current, new Version(1, 0, 11), false, false) &&
+                ApplicationUpdater.ShouldOffer(current, next, true, false) && ApplicationUpdater.ShouldOffer(current, next, false, true) &&
+                !ApplicationUpdater.ShouldOffer(current, current, true, true) && !ApplicationUpdater.ShouldOffer(next, current, false, true),
                 "Неверно обработаны отказ, ручная проверка или сравнение версий.");
             string json = ReleaseJson(next, "abcdef".PadRight(64, '0'), 123);
             using var client = new HttpClient(new ReleaseHandler(HttpStatusCode.OK, json));

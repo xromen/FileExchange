@@ -21,16 +21,28 @@ public partial class App : Application
                 var window = new MainWindow();
                 if (window.ParentNameBox.Text != ExchangeStore.DefaultParentName || !window.DestinationList.IsReadOnly ||
                     window.OpenFolderAfterCopyBox.IsChecked != false || window.CopyFolderPathAfterCopyBox.IsChecked != false ||
+                    window.StartupUpdateCheckBox.IsChecked != true ||
                     !window.CurrentVersionText.Text.Contains(ApplicationUpdater.CurrentVersion.ToString()) || !window.CheckUpdateButton.IsEnabled)
                     throw new InvalidOperationException("Не задано название меню по умолчанию или список допускает несохранённое редактирование.");
                 window.DestinationList.ItemsSource = new[] { new Destination("На сервер", @"\\server\share\Обмен"), new Destination("В архив", @"D:\Архив") };
                 window.DestinationList.SelectedIndex = 0;
                 if (window.ItemNameBox.Text != "На сервер" || window.DestinationBox.Text != @"\\server\share\Обмен")
                     throw new InvalidOperationException("Выбор пункта не заполнил поля редактирования.");
+                string preference = Path.Combine(Path.GetTempPath(), "FileExchange-startup-check-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    window.SaveStartupUpdateCheck(false, preference);
+                    if (window.StartupUpdateCheckBox.IsChecked != false || ApplicationUpdater.StartupCheckEnabled(preference))
+                        throw new InvalidOperationException("Отказ от обновления не снял галочку или не сохранился.");
+                    window.SaveStartupUpdateCheck(true, preference);
+                    if (window.StartupUpdateCheckBox.IsChecked != true || !ApplicationUpdater.StartupCheckEnabled(preference))
+                        throw new InvalidOperationException("Проверка обновления не включилась повторно.");
+                }
+                finally { if (File.Exists(preference)) File.Delete(preference); }
                 var content = (FrameworkElement)window.Content;
                 content.Margin = new Thickness(0);
-                content.Measure(new Size(920, 850));
-                content.Arrange(new Rect(0, 0, 920, 850));
+                content.Measure(new Size(920, 880));
+                content.Arrange(new Rect(0, 0, 920, 880));
                 content.UpdateLayout();
                 Console.WriteLine("OK: WPF-окно создано, название по умолчанию и выбор пункта проверены; установка не выполнялась.");
                 if (e.Args.Length == 2)
