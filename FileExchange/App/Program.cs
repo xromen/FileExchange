@@ -155,13 +155,48 @@ internal static partial class Program
             {
                 string file = Path.Combine(source, name);
                 string target = Path.Combine(installed, name);
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                if (File.Exists(target) && FilesEqual(file, target)) continue;
-                try { File.Copy(file, target, overwrite: true); }
-                catch (IOException error) { throw new IOException("Не удалось обновить установленную программу. Закройте Проводник и повторите запуск.", error); }
+                try { ReplaceInstalledFile(file, target); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    throw new IOException($"Не удалось обновить установленный файл: {target}\r\n{error.Message}", error);
+                }
             }
         }
         RunInstallScript("Install.ps1", installed);
+    }
+
+    internal static void ReplaceInstalledFile(string source, string target)
+    {
+        string directory = Path.GetDirectoryName(target)!;
+        Directory.CreateDirectory(directory);
+        // Загруженная DLL остаётся в резервном файле до освобождения её Проводником.
+        foreach (string old in Directory.EnumerateFiles(directory, Path.GetFileName(target) + ".*.old"))
+        {
+            string name = Path.GetFileName(old), prefix = Path.GetFileName(target) + ".";
+            if (name.Length != prefix.Length + 36 || !Guid.TryParseExact(name.Substring(prefix.Length, 32), "N", out _)) continue;
+            try { File.Delete(old); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+        if (File.Exists(target) && FilesEqual(source, target)) return;
+        string suffix = "." + Guid.NewGuid().ToString("N");
+        string temporary = target + suffix + ".tmp", backup = target + suffix + ".old";
+        try
+        {
+            File.Copy(source, temporary);
+            if (File.Exists(target)) File.Replace(temporary, target, backup);
+            else File.Move(temporary, target);
+        }
+        catch
+        {
+            if (!File.Exists(target) && File.Exists(backup)) File.Move(backup, target);
+            throw;
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+        try { File.Delete(backup); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
 
     private static bool FilesEqual(string left, string right)

@@ -8,15 +8,32 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 function Set-PayloadFile([string]$Source, [string]$Target) {
+    $directory = [IO.Path]::GetDirectoryName($Target)
+    [void][IO.Directory]::CreateDirectory($directory)
+    foreach ($old in [IO.Directory]::EnumerateFiles($directory, [IO.Path]::GetFileName($Target) + '.*.old')) {
+        if ([IO.Path]::GetFileName($old) -notmatch ('^' + [Regex]::Escape([IO.Path]::GetFileName($Target)) + '\.[a-f0-9]{32}\.old$')) { continue }
+        try { [IO.File]::Delete($old) }
+        catch [IO.IOException] { }
+        catch [UnauthorizedAccessException] { }
+    }
     if ([IO.File]::Exists($Target) -and (Get-FileHash -LiteralPath $Source).Hash -eq (Get-FileHash -LiteralPath $Target).Hash) { return }
-    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Target))
-    $temporary = $Target + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $suffix = '.' + [Guid]::NewGuid().ToString('N')
+    $temporary = $Target + $suffix + '.tmp'
+    $backup = $Target + $suffix + '.old'
     try {
         [IO.File]::Copy($Source, $temporary)
-        if ([IO.File]::Exists($Target)) { [IO.File]::Replace($temporary, $Target, [NullString]::Value) }
+        # Сохраняем загруженную DLL: удаление файла без резервного имени блокируется Проводником.
+        if ([IO.File]::Exists($Target)) { [IO.File]::Replace($temporary, $Target, $backup) }
         else { [IO.File]::Move($temporary, $Target) }
     }
+    catch {
+        if (-not [IO.File]::Exists($Target) -and [IO.File]::Exists($backup)) { [IO.File]::Move($backup, $Target) }
+        throw
+    }
     finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
+    try { [IO.File]::Delete($backup) }
+    catch [IO.IOException] { }
+    catch [UnauthorizedAccessException] { }
 }
 
 function Get-MenuInstalled {

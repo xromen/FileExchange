@@ -161,6 +161,7 @@ internal static class SelfTest
             Check(result.Copied == 2 && result.Errors.Length == 0 && File.ReadAllText(copiedTreeFile) == "Обновление" &&
                 File.ReadAllText(Path.Combine(copiedTree, "только в назначении.txt")) == "Сохранить", "Слияние потеряло файлы назначения или не выполнило подтверждённую перезапись.");
             TestOverwriteChoices(root);
+            TestInstalledFileReplacement(root);
             result = FileCopier.Copy(new CopyRequest(deep, [tree]), (_, _) => true);
             Check(result.Copied == 0 && result.Errors.Length == 1 && !Directory.Exists(Path.Combine(deep, Path.GetFileName(tree))),
                 "Копирование папки в саму себя запустило рекурсию.");
@@ -218,7 +219,7 @@ internal static class SelfTest
             string registrationLog = File.ReadAllText(Path.Combine(root, "Fail.log"));
             Check(registrationLog.Contains("Вывод регистрации") && registrationLog.Contains("Ошибка регистрации"),
                 "Журнал регистрации потерял вывод скрипта.");
-            Console.WriteLine("OK: настройки, 25 файлов, рекурсивные и пустые папки, смешанное выделение, слияние, четыре варианта перезаписи и подробности файлов, защита от рекурсии и ссылок, итоги, журнал регистрации.");
+            Console.WriteLine("OK: настройки, 25 файлов, рекурсивные и пустые папки, смешанное выделение, слияние, четыре варианта перезаписи и подробности файлов, защита от рекурсии и ссылок, итоги, замена загруженной DLL, журнал регистрации.");
             return 0;
         }
         finally
@@ -228,6 +229,55 @@ internal static class SelfTest
             if (!resolved.StartsWith(allowed, StringComparison.OrdinalIgnoreCase)) throw new IOException("Недопустимая папка проверки.");
             Directory.Delete(resolved, recursive: true);
         }
+    }
+
+    private static void TestInstalledFileReplacement(string root)
+    {
+        string directory = Path.Combine(root, "Установка [1]");
+        string source = Path.Combine(root, "new-payload.txt");
+        string target = Path.Combine(directory, "loaded.dll");
+        string systemDll = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "version.dll");
+        File.WriteAllText(source, "Новая версия");
+        Program.ReplaceInstalledFile(source, target);
+        Check(File.ReadAllText(target) == "Новая версия", "Новый установочный файл не создан.");
+        File.Copy(systemDll, target, overwrite: true);
+        nint module = System.Runtime.InteropServices.NativeLibrary.Load(target);
+        try
+        {
+            bool locked = false;
+            try { File.Copy(source, target, overwrite: true); }
+            catch (IOException) { locked = true; }
+            Check(locked, "Проверка не воспроизвела блокировку загруженной DLL.");
+            Program.ReplaceInstalledFile(source, target);
+            string[] backups = Directory.GetFiles(directory, "loaded.dll.*.old");
+            Check(File.ReadAllText(target) == "Новая версия" && backups.Length == 1 &&
+                File.ReadAllBytes(backups[0]).AsSpan().SequenceEqual(File.ReadAllBytes(systemDll)) &&
+                System.Runtime.InteropServices.NativeLibrary.GetExport(module, "GetFileVersionInfoW") != 0,
+                "Загруженная DLL не заменена или не сохранена для работающего процесса.");
+        }
+        finally { System.Runtime.InteropServices.NativeLibrary.Free(module); }
+        Program.ReplaceInstalledFile(source, target);
+        Check(Directory.GetFiles(directory).Length == 1, "Освобождённая резервная DLL или временный файл не удалены.");
+        string note = target + ".user.old";
+        File.WriteAllText(note, "Пользовательский файл");
+        Program.ReplaceInstalledFile(source, target);
+        Check(File.ReadAllText(note) == "Пользовательский файл", "Очистка резервных DLL удалила посторонний файл.");
+        File.Delete(note);
+        File.WriteAllText(source, "Следующая версия");
+        using (var locked = File.Open(target, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            bool rejected = false;
+            try { Program.ReplaceInstalledFile(source, target); }
+            catch (IOException) { rejected = true; }
+            Check(rejected && File.ReadAllText(target) == "Новая версия" && Directory.GetFiles(directory).Length == 1,
+                "Неудачная замена изменила старый файл или оставила временные файлы.");
+        }
+        File.Delete(source);
+        bool missing = false;
+        try { Program.ReplaceInstalledFile(source, target); }
+        catch (FileNotFoundException) { missing = true; }
+        Check(missing && File.ReadAllText(target) == "Новая версия" && Directory.GetFiles(directory).Length == 1,
+            "Отсутствующий установочный файл затёр старую версию.");
     }
 
     private static void TestOverwriteChoices(string root)

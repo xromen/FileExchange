@@ -45,6 +45,37 @@ $root = Join-Path $PSScriptRoot ('.file-exchange-update-test-' + [Guid]::NewGuid
 $script:files = @('FileExchange.exe', 'FileExchange.Manager.exe', 'FileExchange.ShellExtension.dll', 'FileExchange.msix', 'FileExchange.cer',
                   'Install.ps1', 'Uninstall.ps1', 'README.md', 'Assets/Logo44.png', 'Assets/Logo150.png')
 try {
+    Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class FileExchangeUpdateTestLibrary {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr LoadLibraryW(string path);
+    [DllImport("kernel32.dll")]
+    public static extern bool FreeLibrary(IntPtr module);
+}
+'@
+    $loadedDirectory = Join-Path $root 'loaded-library'
+    [void][IO.Directory]::CreateDirectory($loadedDirectory)
+    $loadedDll = Join-Path $loadedDirectory 'loaded.dll'
+    $newDll = Join-Path $loadedDirectory 'new.dll'
+    [IO.File]::Copy((Join-Path ([Environment]::GetFolderPath('System')) 'version.dll'), $loadedDll)
+    [IO.File]::WriteAllText($newDll, 'New version')
+    $module = [FileExchangeUpdateTestLibrary]::LoadLibraryW($loadedDll)
+    Assert ($module -ne [IntPtr]::Zero) 'Не удалось загрузить тестовую DLL.'
+    try {
+        $locked = $false
+        try { [IO.File]::Copy($newDll, $loadedDll, $true) } catch { $locked = $true }
+        Assert $locked 'Проверка не воспроизвела блокировку загруженной DLL.'
+        Set-RealPayloadFile $newDll $loadedDll
+        Assert ([IO.File]::ReadAllText($loadedDll) -eq 'New version' -and
+            @([IO.Directory]::GetFiles($loadedDirectory, 'loaded.dll.*.old')).Count -eq 1) 'Загруженная DLL не заменена с сохранением старого файла.'
+    }
+    finally { [void][FileExchangeUpdateTestLibrary]::FreeLibrary($module) }
+    $userBackup = $loadedDll + '.user.old'
+    [IO.File]::WriteAllText($userBackup, 'User data')
+    Set-RealPayloadFile $newDll $loadedDll
+    Assert (@([IO.Directory]::GetFiles($loadedDirectory)).Count -eq 3 -and [IO.File]::ReadAllText($userBackup) -eq 'User data') 'Резервная DLL не удалена после освобождения или затронут пользовательский файл.'
     foreach ($scenario in @('portable', 'installed', 'copy-failure', 'install-failure', 'restart-failure')) {
         $case = Join-Path $root $scenario
         $script:stage = Join-Path $case 'stage'
@@ -83,7 +114,7 @@ try {
         if ($script:menuInstalled) { Assert ($script:installCalls.Count -eq $(if ($failure) { 2 } else { 1 })) "Не вызвана установка/восстановление расширения ($scenario)." }
         else { Assert ($script:installCalls.Count -eq 0) 'Обновление установило удалённое меню.' }
     }
-    Write-Host 'OK: обновление переносимых и установленных файлов, сохранение пользовательских данных, откат при ошибках копирования/установки/перезапуска; меню и сертификаты не изменялись.'
+    Write-Host 'OK: замена загруженной DLL, обновление переносимых и установленных файлов, сохранение пользовательских данных, откат при ошибках копирования/установки/перезапуска; меню и сертификаты не изменялись.'
 }
 finally {
     $resolved = [IO.Path]::GetFullPath($root)
