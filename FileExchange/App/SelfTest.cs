@@ -19,13 +19,47 @@ internal static class SelfTest
             Check(entries.Length == 2 && entries[0].Name == "АРХИВ", "Повторный запуск создал дубликат подпункта.");
             string settings = Path.Combine(root, "settings.json");
             Check(ExchangeStore.ReadParentName(settings) == "Файловый обмен", "Не задано название меню по умолчанию.");
+            Check(ExchangeStore.ReadSettings(settings) == new MenuSettings("Файловый обмен"), "Неверные настройки копирования по умолчанию.");
+            File.WriteAllText(settings, """{ "ParentName": "Файловый обмен" }""");
+            Check(ExchangeStore.ReadSettings(settings) == new MenuSettings("Файловый обмен"), "Старые настройки несовместимы с чекбоксами.");
+            ExchangeStore.SaveSettings(new MenuSettings("Файловый обмен", true, true), settings);
             ExchangeStore.SetParentName("  Передать файлы  ", settings);
-            Check(ExchangeStore.ReadParentName(settings) == "Передать файлы", "Название родителя не сохранено.");
+            Check(ExchangeStore.ReadSettings(settings) == new MenuSettings("Передать файлы", true, true), "Изменение названия сбросило настройки копирования.");
             string savedSettings = File.ReadAllText(settings);
             bool invalidName = false;
             try { ExchangeStore.SetParentName("   ", settings); }
             catch (ArgumentException) { invalidName = true; }
             Check(invalidName && File.ReadAllText(settings) == savedSettings, "Пустое название затёрло настройки.");
+            var actionRequest = new CopyRequest(target, []);
+            foreach (bool open in new[] { false, true })
+            foreach (bool copyPath in new[] { false, true })
+            {
+                var options = new MenuSettings("Передать файлы", open, copyPath);
+                ExchangeStore.SaveSettings(options, settings);
+                Check(ExchangeStore.ReadSettings(settings) == options, "Состояния чекбоксов не сохранены.");
+                var actions = new List<string>();
+                string[] actionErrors = Program.RunPostCopyActions(actionRequest, new CopyResult(1, 0, []),
+                    ExchangeStore.ReadSettings(settings), folder => actions.Add("copy:" + folder), folder => actions.Add("open:" + folder));
+                string[] expected = (copyPath ? new[] { "copy:" + target } : Array.Empty<string>())
+                    .Concat(open ? new[] { "open:" + target } : Array.Empty<string>()).ToArray();
+                Check(actionErrors.Length == 0 && actions.SequenceEqual(expected), "Выполнены неверные действия после копирования.");
+            }
+            var enabled = new MenuSettings("Передать файлы", true, true);
+            foreach (var noCopies in new[] { new CopyResult(0, 1, []), new CopyResult(0, 0, ["Ошибка"]) })
+                Check(Program.RunPostCopyActions(actionRequest, noCopies, enabled,
+                    _ => throw new IOException("Нельзя копировать путь."), _ => throw new IOException("Нельзя открывать папку.")).Length == 0,
+                    "Действия запущены без скопированных объектов.");
+            foreach (var copies in new[] { new CopyResult(1, 0, ["Ошибка другого файла"]), new CopyResult(0, 0, [], 1) })
+            {
+                bool opened = false;
+                var actionErrors = Program.RunPostCopyActions(actionRequest, copies, enabled,
+                    _ => throw new IOException("Буфер недоступен"), _ => opened = true);
+                Check(opened && actionErrors.Length == 1 && actionErrors[0].Contains("Буфер недоступен"),
+                    "Ошибка буфера остановила открытие папки или потерялась; частичный успех и пустые папки должны учитываться.");
+            }
+            Check(Program.RunPostCopyActions(actionRequest, new CopyResult(1, 0, []), enabled,
+                _ => { }, _ => throw new IOException("Проводник недоступен")).Single().Contains("Проводник недоступен"),
+                "Ошибка открытия папки потерялась.");
             string guiConfig = Path.Combine(root, "gui-destinations.json");
             var first = ExchangeStore.Validate("Первый", Path.Combine(root, "first"));
             ExchangeStore.SaveDestination(null, first, guiConfig);
@@ -48,7 +82,7 @@ internal static class SelfTest
 
             string[] sources = Enumerable.Range(0, 25).Select(index => Path.Combine(root, $"файл [{index}] & $.txt")).ToArray();
             foreach (string source in sources) File.WriteAllText(source, $"Содержимое: {Path.GetFileName(source)}");
-            CopyResult result = FileCopier.Copy(new CopyRequest(target, sources), _ => throw new InvalidOperationException("Запрошена перезапись нового файла."));
+            CopyResult result = FileCopier.Copy(new CopyRequest(target, sources), (_, _) => throw new InvalidOperationException("Запрошена перезапись нового файла."));
             Check(result.Copied == 25 && result.Skipped == 0 && result.Errors.Length == 0, "Неверный итог копирования нескольких файлов.");
             Check(Program.FormatCopySummary(result).Contains("Скопировано файлов: 25") && Program.FormatCopySummary(result).Contains("Ошибок: 0"),
                 "Итог успешного копирования не содержит количество файлов.");
@@ -61,7 +95,7 @@ internal static class SelfTest
             string extra = Path.Combine(root, "после ошибки.txt");
             File.WriteAllText(extra, "OK");
             int prompts = 0;
-            result = FileCopier.Copy(new CopyRequest(target, [sources[0], Path.Combine(root, "missing.txt"), root, extra]), path =>
+            result = FileCopier.Copy(new CopyRequest(target, [sources[0], Path.Combine(root, "missing.txt"), root, extra]), (_, path) =>
             {
                 prompts++;
                 Check(path == existingTarget, "Запрос перезаписи содержит неверный путь.");
@@ -74,24 +108,24 @@ internal static class SelfTest
             Check(summary.Contains("Скопировано файлов: 1") && summary.Contains("Пропущено файлов: 1") && summary.Contains("Ошибок: 2") && summary.Contains("missing.txt"),
                 "Итог частичного копирования не содержит счётчики и ошибки.");
             prompts = 0;
-            result = FileCopier.Copy(new CopyRequest(target, [sources[0]]), path => { prompts++; return path == existingTarget; });
+            result = FileCopier.Copy(new CopyRequest(target, [sources[0]]), (_, path) => { prompts++; return path == existingTarget; });
             Check(prompts == 1 && result.Copied == 1 && result.Skipped == 0 && result.Errors.Length == 0 && File.ReadAllText(existingTarget) == "Новая версия",
                 "Подтверждённая перезапись не выполнена или не учтена.");
             Check(File.ReadAllText(sources[0]) == "Новая версия", "Перезапись изменила исходный файл.");
-            result = FileCopier.Copy(new CopyRequest(target, [sources[0]]), _ => false);
+            result = FileCopier.Copy(new CopyRequest(target, [sources[0]]), (_, _) => false);
             Check(result.Copied == 0 && result.Skipped == 1 && result.Errors.Length == 0 && Program.FormatCopySummary(result).Contains("Скопировано файлов: 0"),
                 "Отказ от всех перезаписей не учтён в итоговом сообщении.");
-            result = FileCopier.Copy(new CopyRequest(root, [extra]), _ => throw new InvalidOperationException("Запрошена перезапись исходного файла самим собой."));
+            result = FileCopier.Copy(new CopyRequest(root, [extra]), (_, _) => throw new InvalidOperationException("Запрошена перезапись исходного файла самим собой."));
             Check(result.Copied == 0 && result.Errors.Length == 1 && File.ReadAllText(extra) == "OK", "Копирование в исходную папку изменило файл.");
             File.SetAttributes(existingTarget, FileAttributes.ReadOnly);
             try
             {
-                result = FileCopier.Copy(new CopyRequest(target, [sources[0]]), _ => true);
+                result = FileCopier.Copy(new CopyRequest(target, [sources[0]]), (_, _) => true);
                 Check(result.Copied == 0 && result.Errors.Length == 1 && File.ReadAllText(existingTarget) == "Новая версия",
                     "Неудачная перезапись учтена как успешная или изменила защищённый файл.");
             }
             finally { File.SetAttributes(existingTarget, FileAttributes.Normal); }
-            result = FileCopier.Copy(new CopyRequest(extra, [sources[0]]), _ => throw new InvalidOperationException("Запрошена перезапись при недоступной папке назначения."));
+            result = FileCopier.Copy(new CopyRequest(extra, [sources[0]]), (_, _) => throw new InvalidOperationException("Запрошена перезапись при недоступной папке назначения."));
             Check(result.Copied == 0 && result.Skipped == 0 && result.Errors.Length == 1 && Program.FormatCopySummary(result).Contains("Скопировано файлов: 0"),
                 "Ошибка создания папки назначения не содержит итог копирования.");
             string tree = Path.Combine(root, "Папка [1] & обмен");
@@ -105,7 +139,7 @@ internal static class SelfTest
             File.SetAttributes(hiddenFile, FileAttributes.Hidden);
             string recursiveTarget = Path.Combine(root, "recursive");
             result = FileCopier.Copy(new CopyRequest(recursiveTarget, [tree + Path.DirectorySeparatorChar, extra]),
-                _ => throw new InvalidOperationException("Запрошена перезапись в новой структуре."));
+                (_, _) => throw new InvalidOperationException("Запрошена перезапись в новой структуре."));
             string copiedTree = Path.Combine(recursiveTarget, Path.GetFileName(tree));
             string copiedTreeFile = Path.Combine(copiedTree, "корень.txt");
             string copiedHidden = Path.Combine(copiedTree, "Вложенная", "Глубже", "скрытый.txt");
@@ -116,24 +150,25 @@ internal static class SelfTest
             File.WriteAllText(treeFile, "Обновление");
             File.WriteAllText(Path.Combine(copiedTree, "только в назначении.txt"), "Сохранить");
             prompts = 0;
-            result = FileCopier.Copy(new CopyRequest(recursiveTarget, [tree]), path =>
+            result = FileCopier.Copy(new CopyRequest(recursiveTarget, [tree]), (_, path) =>
             {
                 prompts++;
                 return path != copiedTreeFile;
             });
             Check(prompts == 2 && result.Copied == 1 && result.Skipped == 1 && result.CreatedDirectories == 0 && result.Errors.Length == 0 &&
                 File.ReadAllText(copiedTreeFile) == "Корень", "Слияние папок не запросило перезапись каждого файла или проигнорировало отказ.");
-            result = FileCopier.Copy(new CopyRequest(recursiveTarget, [tree]), _ => true);
+            result = FileCopier.Copy(new CopyRequest(recursiveTarget, [tree]), (_, _) => true);
             Check(result.Copied == 2 && result.Errors.Length == 0 && File.ReadAllText(copiedTreeFile) == "Обновление" &&
                 File.ReadAllText(Path.Combine(copiedTree, "только в назначении.txt")) == "Сохранить", "Слияние потеряло файлы назначения или не выполнило подтверждённую перезапись.");
-            result = FileCopier.Copy(new CopyRequest(deep, [tree]), _ => true);
+            TestOverwriteChoices(root);
+            result = FileCopier.Copy(new CopyRequest(deep, [tree]), (_, _) => true);
             Check(result.Copied == 0 && result.Errors.Length == 1 && !Directory.Exists(Path.Combine(deep, Path.GetFileName(tree))),
                 "Копирование папки в саму себя запустило рекурсию.");
             string blocked = Path.Combine(root, "blocked");
             Directory.CreateDirectory(blocked);
             string conflict = Path.Combine(blocked, Path.GetFileName(tree));
             File.WriteAllText(conflict, "Существующий файл");
-            result = FileCopier.Copy(new CopyRequest(blocked, [tree, extra]), _ => true);
+            result = FileCopier.Copy(new CopyRequest(blocked, [tree, extra]), (_, _) => true);
             Check(result.Copied == 1 && result.Errors.Length == 1 && File.ReadAllText(conflict) == "Существующий файл",
                 "Конфликт файла с папкой затёр данные или остановил остальные объекты.");
             File.WriteAllText(Path.Combine(root, "MakeJunction.ps1"), """
@@ -150,9 +185,9 @@ internal static class SelfTest
             Program.RunInstallScript("MakeJunction.ps1", root);
             try
             {
-                result = FileCopier.Copy(new CopyRequest(Path.Combine(root, "alias"), [linkSource]), _ => true);
+                result = FileCopier.Copy(new CopyRequest(Path.Combine(root, "alias"), [linkSource]), (_, _) => true);
                 Check(result.Copied == 0 && result.Errors.Length == 1, "Соединение папок обошло защиту копирования в себя.");
-                result = FileCopier.Copy(new CopyRequest(Path.Combine(root, "with-link"), [linkSource]), _ => true);
+                result = FileCopier.Copy(new CopyRequest(Path.Combine(root, "with-link"), [linkSource]), (_, _) => true);
                 Check(result.Copied == 1 && result.Errors.Length == 1 && !Directory.Exists(Path.Combine(root, "with-link", Path.GetFileName(linkSource), "cycle")),
                     "Циклическое соединение запустило бесконечное копирование или остановило обычные файлы.");
             }
@@ -183,7 +218,7 @@ internal static class SelfTest
             string registrationLog = File.ReadAllText(Path.Combine(root, "Fail.log"));
             Check(registrationLog.Contains("Вывод регистрации") && registrationLog.Contains("Ошибка регистрации"),
                 "Журнал регистрации потерял вывод скрипта.");
-            Console.WriteLine("OK: настройки, 25 файлов, рекурсивные и пустые папки, смешанное выделение, слияние и перезапись, защита от рекурсии и ссылок, итоги, журнал регистрации.");
+            Console.WriteLine("OK: настройки, 25 файлов, рекурсивные и пустые папки, смешанное выделение, слияние, четыре варианта перезаписи и подробности файлов, защита от рекурсии и ссылок, итоги, журнал регистрации.");
             return 0;
         }
         finally
@@ -193,6 +228,57 @@ internal static class SelfTest
             if (!resolved.StartsWith(allowed, StringComparison.OrdinalIgnoreCase)) throw new IOException("Недопустимая папка проверки.");
             Directory.Delete(resolved, recursive: true);
         }
+    }
+
+    private static void TestOverwriteChoices(string root)
+    {
+        Check(System.Runtime.InteropServices.Marshal.SizeOf<OverwriteDialog.TaskDialogConfig>() == (IntPtr.Size == 8 ? 160 : 96) &&
+            System.Runtime.InteropServices.Marshal.SizeOf<OverwriteDialog.TaskDialogButton>() == IntPtr.Size + 4,
+            "Структуры системного диалога не соответствуют ABI Windows.");
+        string source = Path.Combine(root, "Новые файлы [1] & $");
+        string target = Path.Combine(root, "Существующие файлы");
+        Directory.CreateDirectory(Path.Combine(source, "Вложенная"));
+        string[] relativePaths = ["первый.txt", "второй.txt", Path.Combine("Вложенная", "третий.txt")];
+        foreach (string relative in relativePaths) File.WriteAllText(Path.Combine(source, relative), "Новая версия");
+        var request = new CopyRequest(target, [source]);
+        FileCopier.Copy(request, (_, _) => throw new InvalidOperationException("Совпадений пока нет."));
+        string targetTree = Path.Combine(target, Path.GetFileName(source));
+        var modified = new DateTime(2025, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(Path.Combine(source, relativePaths[0]), modified);
+        string details = OverwriteDialog.FormatDetails(Path.Combine(source, relativePaths[0]), Path.Combine(targetTree, relativePaths[0]));
+        Check(details.Contains("Существующий файл (будет заменён)") && details.Contains("Новый файл (будет скопирован)") &&
+            details.Contains(Path.Combine(source, relativePaths[0])) && details.Contains(Path.Combine(targetTree, relativePaths[0])) &&
+            details.Contains("Размер: 23 байт") && details.Contains($"Изменён: {modified.ToLocalTime():dd.MM.yyyy HH:mm:ss}") && details.Contains("Создан:"),
+            "Подробности не содержат пути, размер или даты обоих файлов.");
+        Check(OverwriteDialog.FormatDetails(Path.Combine(root, "missing-details.txt"), Path.Combine(targetTree, relativePaths[0]))
+            .Contains("Информация недоступна:"), "Отсутствие метаданных остановило диалог.");
+        foreach (OverwriteChoice choice in Enum.GetValues<OverwriteChoice>())
+        {
+            foreach (string relative in relativePaths) File.WriteAllText(Path.Combine(targetTree, relative), "Старая версия");
+            string extra = Path.Combine(source, $"новый-{choice}.txt");
+            File.WriteAllText(extra, "Без совпадения");
+            int prompts = 0;
+            var confirm = Program.CreateOverwriteConfirmation((newFile, oldFile) =>
+            {
+                prompts++;
+                Check(oldFile == Path.Combine(targetTree, Path.GetRelativePath(source, newFile)), "В диалог переданы неверные исходный или конечный пути.");
+                return choice;
+            });
+            CopyResult result = FileCopier.Copy(request, confirm);
+            bool overwrite = choice is OverwriteChoice.Yes or OverwriteChoice.YesToAll;
+            Check(prompts == (choice is OverwriteChoice.YesToAll or OverwriteChoice.NoToAll ? 1 : 3) &&
+                result.Copied == (overwrite ? 4 : 1) && result.Skipped == (overwrite ? 0 : 3) && result.Errors.Length == 0,
+                $"Неверно обработан выбор {choice}, в том числе во вложенной папке.");
+            foreach (string relative in relativePaths)
+                Check(File.ReadAllText(Path.Combine(targetTree, relative)) == (overwrite ? "Новая версия" : "Старая версия"), "Перезаписан или пропущен неверный файл.");
+            Check(File.ReadAllText(Path.Combine(targetTree, Path.GetFileName(extra))) == "Без совпадения", "Выбор для всех затронул файл без совпадения.");
+            File.Delete(extra);
+        }
+        var responses = new Queue<OverwriteChoice>([OverwriteChoice.Yes, OverwriteChoice.No, OverwriteChoice.YesToAll]);
+        var mixed = Program.CreateOverwriteConfirmation((_, _) => responses.Dequeue());
+        Check(mixed("new", "old") && !mixed("new", "old") && mixed("new", "old") && mixed("new", "old") && responses.Count == 0,
+            "Одиночный ответ применился ко всем файлам или выбор для всех не запомнился.");
+        Check(!Program.CreateOverwriteConfirmation((_, _) => OverwriteChoice.No)("new", "old"), "Выбор для всех сохранился между операциями.");
     }
 
     private static void Check(bool condition, string message)

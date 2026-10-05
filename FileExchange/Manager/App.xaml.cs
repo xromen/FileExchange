@@ -17,8 +17,11 @@ public partial class App : Application
         {
             try
             {
+                UpdateSelfTest.Run();
                 var window = new MainWindow();
-                if (window.ParentNameBox.Text != ExchangeStore.DefaultParentName || !window.DestinationList.IsReadOnly)
+                if (window.ParentNameBox.Text != ExchangeStore.DefaultParentName || !window.DestinationList.IsReadOnly ||
+                    window.OpenFolderAfterCopyBox.IsChecked != false || window.CopyFolderPathAfterCopyBox.IsChecked != false ||
+                    !window.CurrentVersionText.Text.Contains(ApplicationUpdater.CurrentVersion.ToString()) || !window.CheckUpdateButton.IsEnabled)
                     throw new InvalidOperationException("Не задано название меню по умолчанию или список допускает несохранённое редактирование.");
                 window.DestinationList.ItemsSource = new[] { new Destination("На сервер", @"\\server\share\Обмен"), new Destination("В архив", @"D:\Архив") };
                 window.DestinationList.SelectedIndex = 0;
@@ -26,8 +29,8 @@ public partial class App : Application
                     throw new InvalidOperationException("Выбор пункта не заполнил поля редактирования.");
                 var content = (FrameworkElement)window.Content;
                 content.Margin = new Thickness(0);
-                content.Measure(new Size(920, 720));
-                content.Arrange(new Rect(0, 0, 920, 720));
+                content.Measure(new Size(920, 850));
+                content.Arrange(new Rect(0, 0, 920, 850));
                 content.UpdateLayout();
                 Console.WriteLine("OK: WPF-окно создано, название по умолчанию и выбор пункта проверены; установка не выполнялась.");
                 if (e.Args.Length == 2)
@@ -55,6 +58,6 @@ public partial class App : Application
             Shutdown(1);
             return;
         }
-        new MainWindow().Show();
+        new MainWindow { UpdateResult = e.Args is ["--update-result", "success" or "failure"] ? e.Args[1] : null }.Show();
     }
 }

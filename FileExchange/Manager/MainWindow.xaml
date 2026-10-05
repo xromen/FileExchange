@@ -1,7 +1,7 @@
 <Window x:Class="FileExchange.Manager.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Файловый обмен — управление" Width="920" Height="760" MinWidth="850" MinHeight="740"
+        Title="Файловый обмен — управление" Width="920" Height="890" MinWidth="850" MinHeight="870"
         WindowStartupLocation="CenterScreen" Background="#F6F7FB" FontFamily="Segoe UI" FontSize="14"
         Loaded="Window_Loaded" Closing="Window_Closing">
     <Window.Resources>
@@ -31,7 +31,7 @@
         </StackPanel>
         <GroupBox Grid.Row="1" Header="Установка и обновление">
             <Grid>
-                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <TextBox x:Name="PackageBox" IsReadOnly="True" AutomationProperties.Name="Папка распакованной сборки" Margin="0,0,10,10"/>
                 <Button Grid.Column="1" Content="Выбрать сборку…" Click="BrowsePackage_Click" Margin="0,0,0,10"/>
@@ -40,13 +40,21 @@
                     <Button Content="Удалить меню" Click="Uninstall_Click"/>
                     <Button Content="Обновить список" Click="Reload_Click"/>
                 </StackPanel>
+                <StackPanel Grid.Row="2" Margin="0,12,10,0">
+                    <TextBlock x:Name="CurrentVersionText" Foreground="#586477"/>
+                    <TextBlock x:Name="ReleaseVersionText" Text="Версия в GitHub Releases: не проверена" Foreground="#586477" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                </StackPanel>
+                <Button Grid.Row="2" Grid.Column="1" x:Name="CheckUpdateButton" Content="Проверить обновление" Click="CheckUpdate_Click" Margin="0,12,0,0" VerticalAlignment="Center"/>
             </Grid>
         </GroupBox>
-        <GroupBox Grid.Row="2" Header="Родительское меню">
+        <GroupBox Grid.Row="2" Header="Настройки меню и копирования">
             <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <TextBox x:Name="ParentNameBox" Text="Файловый обмен" AutomationProperties.Name="Название родительского меню" Margin="0,0,10,0"/>
-                <Button Grid.Column="1" Content="Применить название" Click="SaveParent_Click" Margin="0"/>
+                <Button Grid.Column="1" Content="Применить изменения" Click="SaveParent_Click" Margin="0"/>
+                <CheckBox Grid.Row="1" Grid.ColumnSpan="2" x:Name="OpenFolderAfterCopyBox" Content="Открывать папку после копирования файлов" IsChecked="False" Margin="0,12,0,8"/>
+                <CheckBox Grid.Row="2" Grid.ColumnSpan="2" x:Name="CopyFolderPathAfterCopyBox" Content="Копировать путь до папки после копирования" IsChecked="False"/>
             </Grid>
         </GroupBox>
         <GroupBox Grid.Row="3" Header="Подпункты меню">

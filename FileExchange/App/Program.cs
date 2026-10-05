@@ -71,14 +71,66 @@ internal static partial class Program
         {
             var request = JsonSerializer.Deserialize(File.ReadAllText(path), ExchangeJsonContext.Default.CopyRequest)
                 ?? throw new InvalidDataException("Задание копирования повреждено.");
-            CopyResult result = FileCopier.Copy(request, target =>
-                MessageBoxW(0, $"В папке назначения уже существует файл:\r\n{target}\r\n\r\nПерезаписать его?",
-                    "Файловый обмен — перезапись", 0x00010000 | 0x100 | 0x30 | 0x4) == 6); // Foreground, default No, warning, Yes/No; IDYES.
-            MessageBoxW(0, FormatCopySummary(result), "Файловый обмен — результат",
-                0x00010000u | (result.Errors.Length == 0 ? 0x40u : 0x30u));
-            return result.Errors.Length == 0 ? 0 : 1;
+            var settings = ExchangeStore.ReadSettings();
+            CopyResult result = FileCopier.Copy(request, CreateOverwriteConfirmation(OverwriteDialog.Show));
+            string[] actionErrors = RunPostCopyActions(request, result, settings, CopyFolderPath,
+                folder => { using var process = Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true }); });
+            string summary = FormatCopySummary(result);
+            if (actionErrors.Length > 0) summary += "\r\n\r\nНе удалось выполнить действия после копирования:\r\n" + string.Join("\r\n", actionErrors);
+            bool success = result.Errors.Length == 0 && actionErrors.Length == 0;
+            MessageBoxW(0, summary, "Файловый обмен — результат", 0x00010000u | (success ? 0x40u : 0x30u));
+            return success ? 0 : 1;
         }
         finally { File.Delete(path); }
+    }
+
+    internal static Func<string, string, bool> CreateOverwriteConfirmation(Func<string, string, OverwriteChoice> showDialog)
+    {
+        bool? overwriteAll = null;
+        return (source, target) =>
+        {
+            if (overwriteAll.HasValue) return overwriteAll.Value;
+            OverwriteChoice choice = showDialog(source, target);
+            if (choice == OverwriteChoice.YesToAll) overwriteAll = true;
+            if (choice == OverwriteChoice.NoToAll) overwriteAll = false;
+            return choice is OverwriteChoice.Yes or OverwriteChoice.YesToAll;
+        };
+    }
+
+    internal static string[] RunPostCopyActions(CopyRequest request, CopyResult result, MenuSettings settings,
+        Action<string> copyPath, Action<string> openFolder)
+    {
+        if (result.Copied == 0 && result.CreatedDirectories == 0) return [];
+        string folder = Path.GetFullPath(request.DestinationPath);
+        var errors = new List<string>();
+        if (settings.CopyFolderPathAfterCopy)
+        {
+            try { copyPath(folder); }
+            catch (Exception error) { errors.Add($"Копирование пути в буфер обмена: {error.Message}"); }
+        }
+        if (settings.OpenFolderAfterCopy)
+        {
+            try { openFolder(folder); }
+            catch (Exception error) { errors.Add($"Открытие папки: {error.Message}"); }
+        }
+        return errors.ToArray();
+    }
+
+    private static void CopyFolderPath(string folder)
+    {
+        var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "clip.exe"))
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, StandardInputEncoding = Encoding.Unicode,
+            RedirectStandardError = true
+        };
+        using var process = Process.Start(start) ?? throw new IOException("Не удалось запустить копирование пути.");
+        var errors = process.StandardError.ReadToEndAsync();
+        process.StandardInput.Write(folder);
+        process.StandardInput.Close();
+        process.WaitForExit();
+        string diagnostics = errors.GetAwaiter().GetResult();
+        if (process.ExitCode != 0) throw new IOException($"Код завершения: {process.ExitCode}. {diagnostics}");
     }
 
     internal static string FormatCopySummary(CopyResult result)

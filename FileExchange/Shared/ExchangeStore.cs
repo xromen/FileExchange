@@ -6,7 +6,7 @@ namespace FileExchange.Shared;
 
 public sealed record Destination(string Name, string DestinationPath);
 public sealed record CopyRequest(string DestinationPath, string[] SourcePaths);
-public sealed record MenuSettings(string ParentName);
+public sealed record MenuSettings(string ParentName, bool OpenFolderAfterCopy = false, bool CopyFolderPathAfterCopy = false);
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
 [JsonSerializable(typeof(Destination[]))]
@@ -47,13 +47,15 @@ public static class ExchangeStore
         return new Destination(name.Trim(), path);
     }
 
-    public static string ReadParentName(string? settingsPath = null)
+    public static string ReadParentName(string? settingsPath = null) => ReadSettings(settingsPath).ParentName;
+
+    public static MenuSettings ReadSettings(string? settingsPath = null)
     {
         string path = settingsPath ?? SettingsPath;
-        if (!File.Exists(path)) return DefaultParentName;
+        if (!File.Exists(path)) return new MenuSettings(DefaultParentName);
         var settings = JsonSerializer.Deserialize(File.ReadAllText(path), ExchangeJsonContext.Default.MenuSettings)
-            ?? throw new InvalidDataException("Настройки названия меню повреждены.");
-        return ValidateParentName(settings.ParentName);
+            ?? throw new InvalidDataException("Настройки меню повреждены.");
+        return settings with { ParentName = ValidateParentName(settings.ParentName) };
     }
 
     public static string ValidateParentName(string name)
@@ -64,7 +66,18 @@ public static class ExchangeStore
 
     public static void SetParentName(string name, string? settingsPath = null)
     {
-        var settings = new MenuSettings(ValidateParentName(name));
+        name = ValidateParentName(name);
+        string path = settingsPath ?? SettingsPath;
+        WithLock(path, () =>
+        {
+            var settings = ReadSettings(path) with { ParentName = name };
+            WriteAtomic(path, JsonSerializer.Serialize(settings, ExchangeJsonContext.Default.MenuSettings));
+        });
+    }
+
+    public static void SaveSettings(MenuSettings settings, string? settingsPath = null)
+    {
+        settings = settings with { ParentName = ValidateParentName(settings.ParentName) };
         string path = settingsPath ?? SettingsPath;
         WithLock(path, () => WriteAtomic(path, JsonSerializer.Serialize(settings, ExchangeJsonContext.Default.MenuSettings)));
     }

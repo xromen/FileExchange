@@ -6,7 +6,7 @@ public sealed record CopyResult(int Copied, int Skipped, string[] Errors, int Cr
 
 public static class FileCopier
 {
-    public static CopyResult Copy(CopyRequest request, Func<string, bool> confirmOverwrite)
+    public static CopyResult Copy(CopyRequest request, Func<string, string, bool> confirmOverwrite)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.SourcePaths);
@@ -75,7 +75,7 @@ public static class FileCopier
                 try { File.Copy(entry.Source, entry.Target, overwrite: false); }
                 catch (IOException) when (File.Exists(entry.Target))
                 {
-                    if (!confirmOverwrite(entry.Target)) { skipped++; continue; }
+                    if (!confirmOverwrite(entry.Source, entry.Target)) { skipped++; continue; }
                     File.Copy(entry.Source, entry.Target, overwrite: true);
                 }
                 copied++;

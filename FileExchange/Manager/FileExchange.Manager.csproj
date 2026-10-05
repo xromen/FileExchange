@@ -11,5 +11,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../Shared/*.cs" Link="Shared/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../Packaging/Update.ps1" LogicalName="FileExchange.Update.ps1" />
   </ItemGroup>
 </Project>

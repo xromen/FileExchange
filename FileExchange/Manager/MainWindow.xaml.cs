@@ -13,20 +13,108 @@ namespace FileExchange.Manager;
 public partial class MainWindow : Window
 {
     private bool busy;
+    private bool checkingUpdate;
+    private bool closed;
+    private readonly CancellationTokenSource lifetime = new();
+    internal string? UpdateResult { get; set; }
 
     public MainWindow()
     {
         InitializeComponent();
         Title += $" · версия {typeof(MainWindow).Assembly.GetName().Version!.ToString(3)}";
+        CurrentVersionText.Text = $"Текущая версия: {ApplicationUpdater.CurrentVersion}";
         PackageBox.Text = AppContext.BaseDirectory;
         UserText.Text = $"Администратор · Настройки для {WindowsIdentity.GetCurrent().Name}";
     }
 
-    private void Window_Loaded(object sender, RoutedEventArgs e) => LoadSettings();
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        LoadSettings();
+        if (UpdateResult != null) StatusText.Text = UpdateResult == "success" ? "Приложение обновлено." : "Обновление не завершено. Подробности указаны в журнале обновления.";
+        await CheckForUpdates(manual: false, allowPrompt: UpdateResult == null);
+    }
+
+    private async void CheckUpdate_Click(object sender, RoutedEventArgs e) => await CheckForUpdates(manual: true);
+
+    private async Task CheckForUpdates(bool manual, bool allowPrompt = true)
+    {
+        if (checkingUpdate || busy || closed) return;
+        checkingUpdate = true;
+        CheckUpdateButton.IsEnabled = false;
+        ReleaseVersionText.Text = "Версия в GitHub Releases: проверяется…";
+        ReleaseVersionText.ToolTip = null;
+        try
+        {
+            var release = await ApplicationUpdater.CheckAsync(lifetime.Token);
+            if (closed) return;
+            ReleaseVersionText.Text = release == null ? "Версия в GitHub Releases: опубликованный релиз недоступен" : $"Версия в GitHub Releases: {release.Version}";
+            if (busy) return;
+            if (release == null)
+            {
+                if (manual) MessageBox.Show(this, "Опубликованный релиз недоступен. Проверьте доступ к репозиторию GitHub.", "Файловый обмен — обновление", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            if (release.Version <= ApplicationUpdater.CurrentVersion)
+            {
+                if (manual) MessageBox.Show(this, "Установлена актуальная версия приложения.", "Файловый обмен — обновление", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            if (!allowPrompt || !ApplicationUpdater.ShouldOffer(ApplicationUpdater.CurrentVersion, release.Version, manual, ApplicationUpdater.PromptsSuppressed())) return;
+            var answer = MessageBox.Show(this,
+                $"Доступна версия {release.Version}. Текущая версия: {ApplicationUpdater.CurrentVersion}.\r\n\r\nОбновить приложение? Оно будет закрыто и запущено снова.\r\n\r\nЕсли выбрать «Нет», предложения при запуске будут отключены. Проверить обновление можно вручную.",
+                "Файловый обмен — обновление", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (answer != MessageBoxResult.Yes)
+            {
+                Execute(() =>
+                {
+                    ApplicationUpdater.SuppressPrompts();
+                    StatusText.Text = "Предложения обновления при запуске отключены. Ручная проверка доступна.";
+                });
+                return;
+            }
+            await UpdateApplication(release);
+        }
+        catch (OperationCanceledException) when (closed) { }
+        catch (Exception error)
+        {
+            if (closed) return;
+            ReleaseVersionText.Text = "Версия в GitHub Releases: не удалось проверить";
+            ReleaseVersionText.ToolTip = error.Message;
+            if (manual) MessageBox.Show(this, $"Не удалось проверить обновление.\r\n{error.Message}", "Файловый обмен — обновление", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            checkingUpdate = false;
+            if (!closed) CheckUpdateButton.IsEnabled = true;
+        }
+    }
+
+    private async Task UpdateApplication(GitHubRelease release)
+    {
+        busy = true;
+        MainPanel.IsEnabled = false;
+        StatusText.Text = $"Загружается и проверяется обновление {release.Version}…";
+        try
+        {
+            string staging = await ApplicationUpdater.DownloadAsync(release, lifetime.Token);
+            ApplicationUpdater.StartUpdate(staging, AppContext.BaseDirectory);
+            busy = false;
+            Application.Current.Shutdown();
+        }
+        catch (Exception error)
+        {
+            StatusText.Text = "Обновление не выполнено.";
+            MessageBox.Show(this, error.Message, "Файловый обмен — обновление", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally { busy = false; if (!closed) MainPanel.IsEnabled = true; }
+    }
 
     private void LoadSettings() => Execute(() =>
     {
-        ParentNameBox.Text = ExchangeStore.ReadParentName();
+        var settings = ExchangeStore.ReadSettings();
+        ParentNameBox.Text = settings.ParentName;
+        OpenFolderAfterCopyBox.IsChecked = settings.OpenFolderAfterCopy;
+        CopyFolderPathAfterCopyBox.IsChecked = settings.CopyFolderPathAfterCopy;
         ReloadList();
         StatusText.Text = $"Загружено пунктов: {DestinationList.Items.Count}.";
     });
@@ -59,11 +147,14 @@ public partial class MainWindow : Window
 
     private void SaveParent_Click(object sender, RoutedEventArgs e) => Execute(() =>
     {
-        ExchangeStore.SetParentName(ParentNameBox.Text);
+        SaveSettings();
         ParentNameBox.Text = ExchangeStore.ReadParentName();
         ShellNotification.Refresh();
-        StatusText.Text = "Название меню сохранено.";
+        StatusText.Text = "Настройки меню и копирования сохранены.";
     });
+
+    private void SaveSettings() => ExchangeStore.SaveSettings(new MenuSettings(ParentNameBox.Text,
+        OpenFolderAfterCopyBox.IsChecked == true, CopyFolderPathAfterCopyBox.IsChecked == true));
 
     private void DestinationList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -128,7 +219,7 @@ public partial class MainWindow : Window
         {
             string executable = Path.Combine(PackageBox.Text, "FileExchange.exe");
             if (!File.Exists(executable)) throw new FileNotFoundException("Выберите папку распакованной сборки с FileExchange.exe.");
-            if (install) ExchangeStore.SetParentName(ParentNameBox.Text);
+            if (install) SaveSettings();
             var start = new ProcessStartInfo(executable)
             {
                 UseShellExecute = false, CreateNoWindow = true,
@@ -157,5 +248,12 @@ public partial class MainWindow : Window
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         if (busy) e.Cancel = true;
+        else { closed = true; lifetime.Cancel(); }
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        lifetime.Dispose();
+        base.OnClosed(e);
     }
 }
