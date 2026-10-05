@@ -158,8 +158,8 @@ internal unsafe partial class ShellCommand : IExplorerCommand
             var start = new ProcessStartInfo(Path.Combine(NativeModule.DirectoryPath(), "FileExchange.exe"))
             {
                 UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden
+                // Не передаём SW_HIDE: Windows применяет его и к первому диалогу перезаписи.
+                CreateNoWindow = true
             };
             start.ArgumentList.Add("--copy-request");
             start.ArgumentList.Add(requestPath);
